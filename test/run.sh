@@ -18,4 +18,10 @@ $CC $CFLAGS "$ROOT/test/test_geometry.c" "$ROOT/src/geometry.c" -o "$OUT/test_ge
 $CC $CFLAGS "$ROOT/test/test_input.c" "$ROOT/src/input.c" "$ROOT/src/geometry.c" -o "$OUT/test_input"
 "$OUT/test_input"
 
+$CC $CFLAGS "$ROOT/test/test_player.c" "$ROOT/src/player.c" "$ROOT/src/geometry.c" "$ROOT/src/input.c" -o "$OUT/test_player"
+"$OUT/test_player"
+
+$CC $CFLAGS "$ROOT/test/test_bullet.c" "$ROOT/src/bullet.c" -o "$OUT/test_bullet"
+"$OUT/test_bullet"
+
 echo "ALL HOST TESTS PASSED"
