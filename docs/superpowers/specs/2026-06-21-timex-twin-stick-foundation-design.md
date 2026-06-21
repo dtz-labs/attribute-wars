@@ -255,7 +255,7 @@ Notes (verified in the M1 test build): `-clib=sdcc_iy` works; classic `default` 
 
 ## 13. Open items to resolve during planning/M1
 
-1. **Bullet edge behaviour:** wrap toroidally like the ship, or despawn at the edge? (Leaning: despawn — simpler, and a finite bullet range reads well. Confirm in plan.)
+1. ~~**Bullet edge behaviour:** wrap or despawn?~~ **Resolved: despawn at the edge** (finite range reads better) — implemented in `bullet.c`.
 2. ~~Exact `zcc`/crt flags and the back-buffer-reserve mechanism.~~ **Resolved** (§10, §2.1): `+zx -clib=sdcc_iy -create-app`, ORG defaults to 0x8000.
 3. **Tear-free page-flip (U3)** and **interrupt/bit-6 sequence on real metal (U4):** visual + hardware confirmation at M1 — the prompt forbids emulator-only solutions, and the `im1;ei`/`OUT 0xFF` interaction is exactly the kind that can pass in Fuse yet hang on hardware.
 4. **Real contention magnitude / does the slice hold 50 Hz (S4/U1):** measure clear+draw with `z88dk-ticks` before claiming the frame budget.
