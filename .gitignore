@@ -1,0 +1,14 @@
+# Build output
+/build/
+*.tap
+*.tzx
+*.sna
+*.z80
+*.bin
+*.map
+*.o
+*.lis
+
+# Editor backups / OS turds
+*~
+.DS_Store
