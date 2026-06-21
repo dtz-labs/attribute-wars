@@ -42,7 +42,12 @@ These were checked against the installed z88dk (`~/Programowanie/z88dk`), the li
   - `OUT (0xFF), 0x01` → display **screen B** (bitmap `0x6000`, attrs `0x7800`)
   Never OR in other bits. (Full SCLD mode field, bits 0–2: `000`=std@0x4000, `001`=std@0x6000, `010`=hi-colour, `110`=hi-res.)
 - ✅ **SCLD standard-res page-flip 0x4000↔0x6000 is real** and is the genuine TC2048-only capability the design rests on. Fuse's `tc2048` machine model emulates the SCLD, so a plain `+zx` tap reaches it via `OUT 0xFF` — no special build.
-- ✅ **`in_JoyKempston()` returns a *normalised* byte, not raw port bits.** z88dk remaps to the masks in `<input.h>`: `in_FIRE=0x80, in_RIGHT=0x08, in_LEFT=0x04, in_DOWN=0x02, in_UP=0x01`. `input.c` must decode against these masks (same for `in_JoySinclair1/2`). Do **not** assume the raw `000FUDLR` port layout.
+- ✅ **Joystick byte is *normalised*, not raw port bits** — masks `FIRE=0x80, RIGHT=0x08, LEFT=0x04, DOWN=0x02, UP=0x01`. **API depends on the clib (verified by compiling):**
+  - `sdcc_iy` (newlib — what we use) → `<input.h>` exposes `in_stick_kempston()`, `in_key_pressed(scancode)` (a macro → `_fastcall`), `IN_STICK_*`, `IN_KEY_SCANCODE_*` (pulled from `<input/input_zx.h>` under `__SPECTRUM`).
+  - `default` (classic) → the *different* `in_JoyKempston()`, `in_KeyPressed()`. (This is what the review's V4 referenced; we are **not** on classic.)
+  - The `IN_STICK_*` bit values equal our `JOY_*` masks, so the pure decode logic is API-independent. `input.c` decodes against the masks, never raw `000FUDLR`.
+- ✅ **Header-name clash:** any header of ours named `input.h` on the include path **shadows z88dk's `<input.h>`** (SDCC's `-iquote` still searches it for angle includes). Our input-module interface is therefore named **`controls.h`** (implementation stays `src/input.c`).
+- ✅ **SDCC z80 crashes on struct-return-by-value** (`gen.c` SIGSEGV when returning a struct that is itself a function's struct return). **Rule for the whole codebase: pass structs via out-pointers, never return them by value.** (`make_intent`/`input_read` take `intent_t *out`.) This is also faster on Z80 (no struct byte-copy).
 - ✅ **Memory map confirmed by the linker map:** `CRT_ORG_CODE=$8000`, all code/data/bss/stdio-heap in `$8000–$94C2`, **nothing below 0x8000 and nothing in 0x6000–0x7AFF**, stack `__register_sp=$FF58` (top of RAM, grows down — cannot reach the back buffer). D8 needs *no* `-zorg` override; 0x8000 is the default.
 
 ---
@@ -75,13 +80,13 @@ src/main.c     init; hand off to game loop
 src/game.c     50 Hz loop, TITLE/PLAYING state machine, frame orchestration
 src/video.c    Timex SCLD mode set, attribute fill, page-flip, fast back-buffer clear   [Timex-specific core]
 src/render.c   integer clipped line draw; rotated-vertex player draw; pixel plot; 8x8 OR-blit   [drawing primitives]
-src/input.c    read Kempston + QWEADZXC -> unified intent_t
+src/input.c    read Kempston + QWEADZXC -> unified intent_t  (interface in controls.h, NOT input.h -- §2.1)
 src/player.c   player state, movement, aim/facing, wrap, calls render
 src/bullet.c   bullet pool: spawn, update, wrap/despawn, draw
 src/particle.c thruster particle pool (optional)
 src/enemy.c    stationary enemy placement + draw (minimal)
 
-include/video.h  render.h  input.h  player.h  bullet.h  particle.h  enemy.h  game.h
+include/video.h  render.h  controls.h  player.h  bullet.h  particle.h  enemy.h  game.h
 ```
 
 Each unit has one clear purpose, a small interface, and (for the logic-only ones) host-compilable behaviour.
@@ -217,7 +222,10 @@ export ZCCCFG="$HOME/Programowanie/z88dk/lib/config"
 
 # Build a Spectrum .tap (TC2048 runs Spectrum software; SCLD reached via OUT 0xFF).
 # VERIFIED working (test build): sdcc_iy clib, default ORG already = 0x8000 (no -zorg needed).
-zcc +zx -SO3 -clib=sdcc_iy src/*.c -o build/game -create-app
+# -iquote<abs path>/include puts our headers on the quote-include path (use an
+# ABSOLUTE path, attached form). Our headers use distinct names (controls.h, not
+# input.h) so they don't shadow z88dk system headers (§2.1).
+zcc +zx -SO3 -clib=sdcc_iy -iquote"$PWD/include" src/*.c -o build/game -create-app
 
 # Run on Fuse, Timex TC2048 machine model (VERIFIED: tc2048 id + --tape exist in this build).
 /Applications/Fuse.app/Contents/MacOS/Fuse --machine tc2048 --tape build/game.tap
