@@ -1,16 +1,27 @@
 # Pre-commit hooks -- last line of defence against committing secrets / cruft.
-# Setup:   pip install pre-commit && pre-commit install
+# Setup:   pre-commit install        (wires .git/hooks/pre-commit)
 # Run all: pre-commit run --all-files
+#
+# On `git commit`, hooks run ONLY on the staged files -- they won't touch
+# unrelated work. The text hooks auto-skip binary files, and we additionally
+# exclude the binary AY tune below.
+exclude: '\.(pt3|tap|tzx|sna|z80|bin)$'
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # --- mutating (auto-fix) ---
       - id: trailing-whitespace
+        args: ["--markdown-linebreak-ext=md"]   # keep intentional MD hard breaks
       - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      # --- non-mutating (reject the commit) ---
+      - id: detect-private-key                   # critical: blocks key material
+      - id: check-merge-conflict
       - id: check-yaml
       - id: check-added-large-files
         args: ["--maxkb=512"]
-      - id: detect-private-key      # critical: blocks key material pre-commit
-      - id: mixed-line-ending
-      - id: check-merge-conflict
       - id: check-executables-have-shebangs
+      - id: check-case-conflict                  # cross-OS filename collisions
