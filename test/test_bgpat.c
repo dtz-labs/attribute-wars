@@ -9,7 +9,7 @@ static void check(const char *name, int cond)
     if (!cond) { printf("FAIL %s\n", name); failures++; }
 }
 
-#define IMPL 4   /* number of pattern ids implemented so far (grows per task) */
+#define IMPL BGPAT_COUNT   /* all patterns implemented */
 
 static int paper_safe(u8 p) { return p <= 5u; }   /* {0..5}; never 6 or 7 */
 
@@ -45,6 +45,18 @@ int main(void)
 {
     u8 id;
     for (id = 0; id < IMPL; id++) check_invariants(id);
+
+    /* Noisy patterns must not be identical to the checker fallback. */
+    {
+        static u8 ck[BGPAT_CELLS], nz[BGPAT_CELLS];
+        char nm[48];
+        bgpat_generate(ck, BGPAT_CHECKER, 0x55u);
+        for (id = BGPAT_NOISY_FIRST; id < BGPAT_NOISY_FIRST + BGPAT_NOISY_COUNT; id++) {
+            bgpat_generate(nz, id, 0x55u);
+            sprintf(nm, "noisy id %u differs from checker", id);
+            check(nm, memcmp(ck, nz, sizeof ck) != 0);
+        }
+    }
 
     /* Determinism: same (id, seed) -> identical buffer. */
     {
