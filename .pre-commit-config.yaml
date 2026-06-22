@@ -1,0 +1,16 @@
+# Pre-commit hooks -- last line of defence against committing secrets / cruft.
+# Setup:   pip install pre-commit && pre-commit install
+# Run all: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: detect-private-key      # critical: blocks key material pre-commit
+      - id: mixed-line-ending
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs

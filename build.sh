@@ -8,8 +8,13 @@
 # don't shadow z88dk's <input.h> etc.
 set -e
 
-export PATH="$HOME/Programowanie/z88dk/bin:$PATH"
-export ZCCCFG="$HOME/Programowanie/z88dk/lib/config"
+# Local dev points PATH/ZCCCFG at the user's z88dk checkout. In CI we build
+# inside the official z88dk Docker image, where zcc is already on PATH and
+# ZCCCFG is preset -- so only set these when the local checkout is present.
+if [ -d "$HOME/Programowanie/z88dk/bin" ]; then
+    export PATH="$HOME/Programowanie/z88dk/bin:$PATH"
+    export ZCCCFG="$HOME/Programowanie/z88dk/lib/config"
+fi
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"

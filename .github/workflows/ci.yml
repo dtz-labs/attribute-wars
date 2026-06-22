@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# Least-privilege token: this workflow only reads the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: host unit tests (pure logic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run host unit tests
+        # test/run.sh builds every test_*.c natively with -Wall -Wextra -Werror
+        # and runs it -- no Z80 toolchain needed. This is also the hard lint gate.
+        run: ./test/run.sh
+
+  build-tap:
+    name: build game.tap (z88dk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with z88dk (official Docker image)
+        # Checkout runs on the host runner (which has Node for the JS action),
+        # then the build runs inside the z88dk image. build.sh skips its local
+        # PATH/ZCCCFG export when ~/Programowanie/z88dk is absent and uses the
+        # image's preset toolchain instead.
+        run: docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest ./build.sh
+      - name: Upload TAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: attribute-wars-tap
+          path: build/game.tap
+          if-no-files-found: error
+
+  lint:
+    name: cppcheck (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Static analysis
+        # Advisory only: the host -Werror build is the hard gate. cppcheck adds a
+        # second opinion on the pure-logic C. `|| true` keeps it non-blocking;
+        # drop that once the codebase is clean to make it enforcing.
+        run: |
+          cppcheck --std=c99 --enable=warning,portability,performance \
+            --inline-suppr --suppress=missingIncludeSystem \
+            -I include src test || true
