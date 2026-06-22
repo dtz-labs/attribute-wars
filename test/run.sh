@@ -38,4 +38,7 @@ $CC $CFLAGS "$ROOT/test/test_rng.c" "$ROOT/src/rng.c" -o "$OUT/test_rng"
 $CC $CFLAGS "$ROOT/test/test_enemy.c" "$ROOT/src/enemy.c" "$ROOT/src/rng.c" -o "$OUT/test_enemy"
 "$OUT/test_enemy"
 
+$CC $CFLAGS "$ROOT/test/test_score.c" "$ROOT/src/score.c" -o "$OUT/test_score"
+"$OUT/test_score"
+
 echo "ALL HOST TESTS PASSED"

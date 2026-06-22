@@ -54,21 +54,24 @@ Execution order respects dependencies: **1 → 2 → 3 → 4 → 5 → 6 → 7 �
 ```c
 /* score.h */
 #include "types.h"
-typedef struct { u8 digits[6]; u16 next_extra; } score_t;  /* digits[0]=most significant */
+/* extra_tt = the highest "ten-thousands milestone" (score / 10000, range 0..99)
+ * for which an extra life has been granted. MONOTONIC (never decreases), so a
+ * later score drop can't re-earn a passed threshold. A u8 holds 0..99 — using a
+ * "next_extra" value in points would overflow u16 past 65535. */
+typedef struct { u8 digits[6]; u8 extra_tt; } score_t;  /* digits[0]=most significant */
 typedef struct { u8 wave; score_t score; u8 lives; u8 shields; } game_state_t;
 
 #define START_LIVES   2u
 #define START_SHIELDS 3u
-#define EXTRA_LIFE_EVERY 10000u
 
-void score_reset(score_t *s);                 /* digits=0, next_extra=10000 */
-u8   score_add(score_t *s, u16 pts);          /* BCD add; returns # of 10k thresholds newly crossed */
+void score_reset(score_t *s);                 /* digits=0, extra_tt=0 */
+u8   score_add(score_t *s, u16 pts);          /* BCD add; returns # of new 10,000 milestones crossed */
 void score_sub(score_t *s, u16 pts);          /* BCD borrow; clamps at 0 */
 u16  score_enemy_points(u8 level);            /* 200/—/400/600 keyed by ENEMY_* level (size-4, hole at 1) */
 void game_new(game_state_t *g);               /* wave=1, score reset, lives=START_LIVES, shields=START_SHIELDS */
 void game_resume_from_wave(game_state_t *g, u8 wave);  /* wave=wave, score reset, lives/shields reset */
 ```
-Implementation notes: store the score as a 6-digit array; `score_add`/`score_sub` are decimal carry/borrow loops over the 6 digits (no `u32`, no division). `score_add` compares the new value against `next_extra` and, while `value >= next_extra`, counts a life and advances `next_extra += 10000` (monotonic). `score_sub` computes the full borrow-propagating subtract; **if the final borrow is set, zero all digits** (clamp). `score_enemy_points`: table `{200,0,400,600}` indexed by level (`ENEMY_BOUNCE=0,CHASE=2,HUNTER=3` from `enemy.h`).
+Implementation notes: store the score as a 6-digit array; `score_add`/`score_sub` are decimal carry/borrow loops over the 6 digits (no `u32`, no division). After a `score_add`, compute `tt = digits[0]*10 + digits[1]` (the ten-thousands count, 0..99); if `tt > s->extra_tt`, the number of new lives is `tt - s->extra_tt`, set `s->extra_tt = tt`, and return it (else return 0) — monotonic, so a later `score_sub` never lets a passed milestone re-award. `score_sub` computes the full borrow-propagating subtract; **if the final borrow is set, zero all digits** (clamp) and leave `extra_tt` unchanged. `score_enemy_points`: table `{200,0,400,600}` indexed by level (`ENEMY_BOUNCE=0,CHASE=2,HUNTER=3` from `enemy.h`).
 
 - [ ] **Step 1: Write failing tests** (`test/test_score.c`)
 
@@ -98,12 +101,15 @@ static void test_sub_borrow_and_clamp(void){
 static void test_extra_life(void){
     score_t s; score_reset(&s);
     CHECK(score_add(&s, 600)==0);
-    /* climb to just under 10000 then cross once */
+    /* climb to 9600 (under 10000), no life yet */
     for(int i=0;i<15;i++) score_add(&s, 600);          /* 9600 */
-    u8 lives = score_add(&s, 600);                      /* crosses 10000 once */
-    CHECK(lives==1 && s.next_extra==20000);
-    /* losing points must NOT let you re-earn the passed threshold */
-    score_sub(&s, 5000); CHECK(score_add(&s, 4000)==0); /* back over 10000, but next_extra is 20000 */
+    CHECK(s.extra_tt==0);
+    u8 lives = score_add(&s, 600);                      /* 10200 -> crosses 10000 once */
+    CHECK(lives==1 && s.extra_tt==1 && val(&s)==10200);
+    /* losing points must NOT let you re-earn the passed milestone */
+    score_sub(&s, 5000); CHECK(s.extra_tt==1);          /* 5200 */
+    CHECK(score_add(&s, 6000)==0);                      /* 11200, back over 10000, but milestone 1 already given */
+    CHECK(s.extra_tt==1);
 }
 static void test_enemy_points(void){
     CHECK(score_enemy_points(ENEMY_BOUNCE)==200);
@@ -113,9 +119,9 @@ static void test_enemy_points(void){
 static void test_game_state(void){
     game_state_t g; game_new(&g);
     CHECK(g.wave==1 && g.lives==START_LIVES && g.shields==START_SHIELDS && val(&g.score)==0);
-    g.score.digits[5]=9; g.wave=14; g.lives=0;
+    g.score.digits[5]=9; g.score.extra_tt=5; g.wave=14; g.lives=0;
     game_resume_from_wave(&g, 14);
-    CHECK(g.wave==14 && val(&g.score)==0 && g.score.next_extra==10000 && g.lives==START_LIVES && g.shields==START_SHIELDS);
+    CHECK(g.wave==14 && val(&g.score)==0 && g.score.extra_tt==0 && g.lives==START_LIVES && g.shields==START_SHIELDS);
 }
 int main(void){ test_add_carry(); test_sub_borrow_and_clamp(); test_extra_life();
                 test_enemy_points(); test_game_state();
