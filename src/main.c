@@ -1,19 +1,30 @@
 /*
  * Twin-Stick Shooter for Timex TC2048 / ZX Spectrum -- main.c
  *
- * Milestone 1, step 5: a playing slice with stakes.
- *   - player ship: 8x8 sprite, Kempston/cursor movement, wraps
- *   - enemies:     8x8 sprites that WANDER randomly (no player tracking yet)
- *   - bullets:     fired (facing or QWEADZXC 8-way), pooled, fire cooldown
- *   - collision:   bullets destroy enemies; cleared wave respawns
- *   - death:       touching an enemy resets the player to centre + new wave
- *   - background:  static 8x8 attribute colour (blue arena frame + checker),
- *                  set once on both buffers so the page-flip never disturbs it
+ * The full gameplay layer wired into the 50 Hz loop (spec §3.5/§5-§9):
+ *   - player ship: 8x8 sprite, scheme-driven move + energy boost; visual recoil
+ *                  + muzzle flash on each shot (render-only, no physics kick)
+ *   - enemies:     8x8 sprites, wave-driven mix (bounce/chase/hunter) spawned
+ *                  per the 16-wave difficulty table (enemies_spawn(es, g.wave))
+ *   - bullets:     fired 8-way, pooled, fire cooldown; each shot costs points
+ *   - wave timer:  per-wave frame countdown; early clear pays a (seconds*10)
+ *                  bonus; expiry carries no penalty (the wave just continues)
+ *   - economy:     BCD score (score.c) -- +points per kill, -5 fire, -10 shield
+ *                  hit, -100 death; crossing each 10,000 grants an extra life
+ *   - state:       a single game_state_t g {wave, score, lives, shields}; on a
+ *                  wave clear g.wave++ advances the difficulty index
+ *   - game over:   lives==0 -> a GAME OVER screen with final score + wave;
+ *                  FIRE/SPACE resumes from the death wave, Q starts a fresh game
+ *   - sound:       1-bit beeper SFX on shoot/explode/hit/death/extra-life/bonus
+ *   - HUD:         lives + shields (top), timer + boost bars (bottom), and the
+ *                  SCORE rendered as big attribute-cell digits behind the action
  *   - rendering:   incremental erase+redraw into the hidden buffer, page-flip
  *
  * All hardware (port 0xFF, screen/attr addresses) lives in scld.c; the loop only
- * asks for the back buffer, blits into it, and presents. Attributes are painted
- * once (design D1) -- white ink everywhere so sprites stay readable on any cell.
+ * asks for the back buffer, blits into it, and presents. The score-digit
+ * background uses dark paper on lit cells so the white-ink sprites stay readable
+ * (design D1); every cell-restore path (fx/death/telegraph) asks the HUD for the
+ * current background colour so explosions never punch holes in the score.
  */
 
 #include "scld.h"
@@ -27,25 +38,31 @@
 #include "arena.h"
 #include "rng.h"
 #include "score.h"
+#include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
 #include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
 #include <string.h>       /* memset (game-over fills) */
-#include <input.h>        /* in_key_pressed + IN_KEY_SCANCODE_* (title menu) */
+#include <input.h>        /* in_key_pressed + IN_KEY_SCANCODE_* (title/game-over) */
 
 #define INVULN_FRAMES 50u /* ~1s of i-frames after a hit (ship blinks)         */
 
-/* Max objects drawn in one frame: player + enemies + bullets. */
-#define MAX_DRAW (1u + MAX_ENEMIES + MAX_BULLETS)
+/* Max objects drawn in one frame: player + enemies + bullets + muzzle flash. */
+#define MAX_DRAW (1u + MAX_ENEMIES + MAX_BULLETS + 1u)
 
 /* Frames between shots — keeps the bullet/sprite load inside the ~50 Hz budget. */
 #define FIRE_COOLDOWN 8u
 
-/* Placeholder full timer bar until Task 8 wires the real wave clock. */
-#define HUD_TIMER_PLACEHOLDER 1500u
-
 #define PLAYER_START_X 128u
 #define PLAYER_START_Y 96u
+
+/* Visual recoil (spec §3.5): how many frames the ship draws kicked-back. */
+#define RECOIL_FRAMES 2u
+
+/* Largest u8 wave we let the difficulty index climb to. enemies_spawn() loops
+ * at the wave-16 settings for anything >16, so this is only an anti-wrap guard
+ * (a player reaching ~200 endless waves never needs the counter to overflow). */
+#define WAVE_MAX 200u
 
 #define KIND_SPRITE 0u   /* full 8x8 sprite (player, enemy) */
 #define KIND_BULLET 1u   /* cheap 3x3 dot                   */
@@ -69,6 +86,26 @@ static const u8 *enemy_sprite(u8 level)
     if (level == ENEMY_HUNTER) return ps_enemy_hunter;
     if (level == ENEMY_CHASE)  return ps_enemy_chase;
     return ps_enemy;
+}
+
+/* Wave time budget in frames for the active wave. Mirrors enemies_spawn()'s
+ * index clamp (1-based wave; wave==0 -> wave 1; >16 loops at index 15) so the
+ * timer length always matches the wave that was actually spawned. */
+static u16 wave_time_frames(u8 wave)
+{
+    u8 idx;
+    if (wave <= 1u)       idx = 0u;
+    else if (wave >= 17u) idx = 15u;
+    else                  idx = (u8)(wave - 1u);
+    return wave_table[idx].time_frames;
+}
+
+/* sign of a -1/0/+1 step (already normalised, returned as-is). */
+static s8 step_sign(s8 v)
+{
+    if (v > 0) return 1;
+    if (v < 0) return -1;
+    return 0;
 }
 
 /* Background colour, page-flip helper, and the ATTR macro now live in hud.c /
@@ -275,6 +312,83 @@ static void put_text(u16 base, u8 col, u8 row, const char *s)
     }
 }
 
+/* Render the 6 BCD score digits left-to-right at (col,row) of BOTH bitmaps. */
+static void put_score_digits(u8 col, u8 row, const score_t *s)
+{
+    u8 i;
+    for (i = 0; i < 6u; i++) {
+        u8 ch = (u8)('0' + s->digits[i]);
+        put_char(SCLD_SCREEN_A, (u8)(col + i), row, ch);
+        put_char(SCLD_SCREEN_B, (u8)(col + i), row, ch);
+    }
+}
+
+/* Render a u8 (0..255) as up to 3 right-aligned decimal chars into BOTH bitmaps.
+ * Only /10 and /100 on a small u8 — cheap, no runtime-value division. */
+static void put_u8(u8 col, u8 row, u8 v)
+{
+    u8 h = (u8)(v / 100u);
+    u8 t = (u8)((v / 10u) % 10u);
+    u8 o = (u8)(v % 10u);
+    if (h) {
+        put_char(SCLD_SCREEN_A, col, row, (u8)('0' + h));
+        put_char(SCLD_SCREEN_B, col, row, (u8)('0' + h));
+    }
+    if (h || t) {
+        put_char(SCLD_SCREEN_A, (u8)(col + 1), row, (u8)('0' + t));
+        put_char(SCLD_SCREEN_B, (u8)(col + 1), row, (u8)('0' + t));
+    }
+    put_char(SCLD_SCREEN_A, (u8)(col + 2), row, (u8)('0' + o));
+    put_char(SCLD_SCREEN_B, (u8)(col + 2), row, (u8)('0' + o));
+}
+
+/* put_text into BOTH bitmaps (so the page-flip's current page shows it). */
+static void put_text_both(u8 col, u8 row, const char *s)
+{
+    put_text(SCLD_SCREEN_A, col, row, s);
+    put_text(SCLD_SCREEN_B, col, row, s);
+}
+
+/*
+ * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
+ * player died on, and waits for a choice:
+ *   FIRE / SPACE -> resume from the death wave  (returns 0)
+ *   Q            -> fresh game from wave 1       (returns 1)
+ * Drawn into BOTH bitmaps + both attribute blocks, so it reads regardless of
+ * which page the last page-flip left visible (we don't flip while waiting).
+ * Caller does the game_state reset + re-init.
+ */
+static u8 game_over_screen(const game_state_t *g, u8 death_wave)
+{
+    game_over_flash();
+
+    scld_clear(SCLD_SCREEN_A);
+    scld_clear(SCLD_SCREEN_B);
+    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
+    memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
+
+    put_text_both(11,  6, "GAME OVER");
+    put_text_both( 7, 10, "SCORE");
+    put_score_digits(13, 10, &g->score);
+    put_text_both( 7, 12, "WAVE");
+    put_u8(13, 12, death_wave);
+    put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
+    put_u8(27, 17, death_wave);
+    put_text_both( 3, 19, "Q           NEW GAME");
+
+    for (;;) {
+        intent_t in;
+        input_read(DIR_NONE, &in);    /* scheme-agnostic FIRE read */
+        if (in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
+            return 0u;                 /* resume from the death wave */
+        }
+        if (in_key_pressed(IN_KEY_SCANCODE_q)) {
+            return 1u;                 /* fresh game */
+        }
+        scld_wait();
+    }
+}
+
 /* Fill one 32-cell attribute row of screen A (title highlights). */
 static void title_attr_row(u8 row, u8 v)
 {
@@ -390,18 +504,30 @@ int main(void)
     bullets_t bullets;
     enemies_t enemies;
     intent_t  in;
-    /* Placeholder score: this milestone has no scoring yet (Task 8 wires the
-     * real economy). It exists so the HUD has digits to render as the
+    /* Single source of truth for the run: wave (difficulty index), BCD score,
+     * lives, shields. game_new() seeds it; the HUD reads g.score for its
      * big-attribute-digit background. */
-    static score_t hud_score;
+    static game_state_t g;
     u8        i;
     u8        cooldown = 0;
-    u16       kills    = 0;            /* total enemies destroyed (drives waves) */
     u8        tick     = 0;            /* frame counter (thruster flicker etc.)  */
-    u8        lives    = START_LIVES;
-    u8        shields  = START_SHIELDS;
     u8        invuln   = 0;            /* i-frames after a hit                    */
     u8        spawn_timer = TELEGRAPH_FRAMES;  /* telegraph the opening wave      */
+
+    /* ---- per-wave clock (spec §5.3): counts down once enemies are active. ----
+     * wave_total is the wave's full budget (for the proportional HUD bar);
+     * wave_secs is the last second shown on the bar, so we redraw the timer only
+     * when the displayed second actually changes (not every frame). */
+    u16       wave_timer = 0u;
+    u16       wave_total = 0u;
+    u16       wave_secs  = 0xFFFFu;    /* force the first timer draw             */
+
+    /* ---- visual recoil (spec §3.5): render-only, no physics. On a shot we set
+     * recoil_timer and remember the aim dir; the player-draw offsets the ship
+     * 1px opposite the aim and flashes a muzzle dot one cell ahead. ---- */
+    static u8 recoil_timer = 0u;
+    static s8 recoil_dx    = 0;
+    static s8 recoil_dy    = 0;
 
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
     z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
@@ -418,16 +544,19 @@ int main(void)
 
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
-    score_reset(&hud_score);          /* zero the placeholder score             */
-    hud_paint_background(&hud_score); /* paint score-digit bg into both blocks  */
+    game_new(&g);                     /* wave 1, score 0, START_LIVES/SHIELDS   */
+    hud_paint_background(&g.score);   /* paint score-digit bg into both blocks  */
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
-    enemies_spawn(&enemies, 1u);  /* TODO Task 8: wire real wave number */
+    enemies_spawn(&enemies, g.wave);
+    wave_total = wave_time_frames(g.wave);   /* full bar; clock starts after the
+                                              * telegraph (when enemies go live) */
+    wave_timer = wave_total;
     hud_invalidate();                 /* force first widget paint               */
-    hud_draw_lives(lives);
-    hud_draw_shields(shields);
-    hud_draw_timer(HUD_TIMER_PLACEHOLDER, HUD_TIMER_PLACEHOLDER);  /* full bar  */
+    hud_draw_lives(g.lives);
+    hud_draw_shields(g.shields);
+    hud_draw_timer(wave_timer, wave_total);   /* full bar                       */
     hud_draw_boost(player.boost_energy);
     prevn[0] = 0;
     prevn[1] = 0;
@@ -445,10 +574,20 @@ int main(void)
         if (cooldown) {
             cooldown--;
         }
+        if (recoil_timer) {
+            recoil_timer--;
+        }
         if (in.fire && cooldown == 0) {
             if (bullet_spawn(&bullets, player.x, player.y,
                              in.aim_dx, in.aim_dy) >= 0) {
                 cooldown = FIRE_COOLDOWN;
+                /* economy + sound + recoil — only on a real shot (spec §3.5/§4/§8) */
+                score_sub(&g.score, 5u);
+                hud_score_changed(&g.score);
+                sfx_play(SFX_SHOOT);             /* ~1ms click, safe in-loop      */
+                recoil_timer = RECOIL_FRAMES;    /* kick the ship back ~2 frames  */
+                recoil_dx    = in.aim_dx;        /* store aim for the draw offset */
+                recoil_dy    = in.aim_dy;
             }
         }
         bullets_update(&bullets);
@@ -465,57 +604,120 @@ int main(void)
                 telegraph_clear(&enemies);      /* restore before they appear */
             }
         } else {
-            /* ---- enemies act; bullets destroy them (hit-pop per kill) ---- */
+            /* ---- wave clock: counts down once enemies are active (spec §5.3).
+             * Expiry is a non-event (no penalty, no bonus) -- the wave just runs
+             * on until cleared, so we only stop the counter at 0. ---- */
+            if (wave_timer > 0u) {
+                wave_timer--;
+            }
+            /* Redraw the timer bar only when the displayed second changes. */
+            {
+                u16 secs = (u16)(wave_timer / 50u);
+                if (secs != wave_secs) {
+                    wave_secs = secs;
+                    hud_draw_timer(wave_timer, wave_total);
+                }
+            }
+
+            /* ---- enemies act; bullets destroy them (hit-pop + points per kill) ---- */
             enemies_update(&enemies, player.x, player.y, &bullets);
             {
                 u8 alive_before[MAX_ENEMIES];
+                u8 scored = 0u;
                 for (i = 0; i < MAX_ENEMIES; i++) {
                     alive_before[i] = enemies.e[i].alive;
                 }
-                kills = (u16)(kills + collide_bullets_enemies(&bullets, &enemies));
+                (void)collide_bullets_enemies(&bullets, &enemies);
                 for (i = 0; i < MAX_ENEMIES; i++) {
                     if (alive_before[i] && !enemies.e[i].alive) {
+                        u8 xl = score_add(&g.score,
+                                          score_enemy_points(enemies.e[i].level));
+                        g.lives = (u8)(g.lives + xl);          /* extra life(s)  */
+                        if (xl) {
+                            sfx_play(SFX_EXTRA_LIFE);
+                            hud_draw_lives(g.lives);
+                        }
                         fx_spawn(enemies.e[i].x, enemies.e[i].y);
+                        sfx_play(SFX_EXPLODE);                 /* short, in-loop  */
+                        scored = 1u;
                     }
+                }
+                if (scored) {
+                    hud_score_changed(&g.score);               /* points landed   */
                 }
             }
 
             if (!enemies_any_alive(&enemies)) {
-                enemies_spawn(&enemies, 1u);        /* next wave (telegraphed); TODO Task 8: wire real wave */
+                /* ---- WAVE CLEARED: early-clear bonus = (seconds left)*10 (§5.3) */
+                u16 bonus = (u16)((wave_timer / 50u) * 10u);
+                if (bonus) {
+                    u8 xl = score_add(&g.score, bonus);
+                    g.lives = (u8)(g.lives + xl);
+                    if (xl) {
+                        sfx_play(SFX_EXTRA_LIFE);
+                        hud_draw_lives(g.lives);
+                    }
+                    sfx_play(SFX_BONUS);          /* longer tone; we're between
+                                                   * waves so blocking is fine    */
+                    hud_score_changed(&g.score);
+                }
+                /* advance the difficulty index (capped so the u8 never wraps) */
+                if (g.wave < (u8)WAVE_MAX) {
+                    g.wave++;
+                }
+                enemies_spawn(&enemies, g.wave);    /* next wave (telegraphed)    */
+                wave_total = wave_time_frames(g.wave);
+                wave_timer = wave_total;
+                wave_secs  = 0xFFFFu;               /* force a timer redraw       */
                 spawn_timer = TELEGRAPH_FRAMES;
             } else if (invuln == 0u && player_hit(player.x, player.y, &enemies)) {
                 fx_spawn(player.x, player.y);        /* hit pop at the ship */
-                if (shields > 0u) {
-                    shields--;                       /* a shield absorbs it */
+                if (g.shields > 0u) {
+                    /* ---- a shield absorbs the hit (spec §4/§8): -10 + click ---- */
+                    g.shields--;
+                    score_sub(&g.score, 10u);
+                    sfx_play(SFX_HIT);               /* short, in-loop            */
+                    hud_score_changed(&g.score);
                     invuln = INVULN_FRAMES;
-                    hud_draw_shields(shields);
+                    hud_draw_shields(g.shields);
                 } else {
-                    death_anim(player.x, player.y);  /* shields gone -> KABOOM */
+                    /* ---- shields gone -> DEATH: -100, KABOOM + death tone ---- */
+                    score_sub(&g.score, 100u);
+                    death_anim(player.x, player.y);  /* scene freezes; frozen ->  */
+                    sfx_play(SFX_DEATH);             /* long tone is safe here     */
                     scld_clear(SCLD_SCREEN_A);
                     scld_clear(SCLD_SCREEN_B);
-                    if (lives > 0u) {
-                        lives--;
+                    if (g.lives > 0u) {
+                        g.lives--;
                     }
-                    if (lives == 0u) {               /* GAME OVER -> fresh game */
-                        game_over_flash();
-                        lives = START_LIVES;
-                        shields = START_SHIELDS;
-                        kills = 0;
+                    if (g.lives == 0u) {
+                        /* ---- GAME OVER (spec §7): show score + wave, then offer
+                         * FIRE/SPACE resume-from-death-wave or Q fresh game. ---- */
+                        u8 death_wave = g.wave;
+                        if (game_over_screen(&g, death_wave) == 0u) {
+                            game_resume_from_wave(&g, death_wave);  /* score 0, keep wave */
+                        } else {
+                            game_new(&g);                            /* wave 1     */
+                        }
                     } else {
-                        shields = START_SHIELDS;      /* new life, full shields */
+                        g.shields = START_SHIELDS;    /* new life, full shields    */
                     }
-                    hud_paint_background(&hud_score);  /* repaint score-digit bg */
+                    hud_paint_background(&g.score);   /* repaint score-digit bg     */
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
-                    enemies_spawn(&enemies, 1u);      /* TODO Task 8: wire real wave */
-                    spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn */
-                    hud_invalidate();                 /* bitmaps + bars were wiped */
-                    hud_draw_lives(lives);
-                    hud_draw_shields(shields);
-                    hud_draw_timer(HUD_TIMER_PLACEHOLDER, HUD_TIMER_PLACEHOLDER);
+                    enemies_spawn(&enemies, g.wave);  /* re-init the current wave  */
+                    wave_total = wave_time_frames(g.wave);
+                    wave_timer = wave_total;          /* fresh clock for the wave  */
+                    wave_secs  = 0xFFFFu;
+                    spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn     */
+                    hud_invalidate();                 /* bitmaps + bars were wiped  */
+                    hud_draw_lives(g.lives);
+                    hud_draw_shields(g.shields);
+                    hud_draw_timer(wave_timer, wave_total);
                     hud_draw_boost(player.boost_energy);
                     cooldown = 0;
+                    recoil_timer = 0u;
                     invuln = INVULN_FRAMES;
                 }
             }
@@ -537,9 +739,34 @@ int main(void)
         {                                                        /* player ship  */
             u8 fdir = (u8)((player.facing < 8u) ? player.facing : 0u); /* NONE->N */
             if (!invuln || (tick & 2u)) {                /* blink while invuln */
-                SPR_DRAW(back, player.x, player.y, ps_ship_dir[fdir]);
-                prev[bi][n].x = player.x; prev[bi][n].y = player.y;
+                u8 dx = player.x;
+                u8 dy = player.y;
+                /* ---- visual recoil (spec §3.5): on a recent shot, draw the ship
+                 * 1px opposite the aim (and flash a muzzle dot ahead). Player
+                 * state is untouched; we just record the drawn position so the
+                 * incremental erase still matches what landed. ---- */
+                if (recoil_timer) {
+                    s8 sx = step_sign(recoil_dx);
+                    s8 sy = step_sign(recoil_dy);
+                    /* opposite aim, clamped (x wraps as a u8; y stays 0..184). */
+                    dx = (u8)(player.x - sx);
+                    if (sy > 0 && player.y > 0u)         dy = (u8)(player.y - 1u);
+                    else if (sy < 0 && player.y < 184u)  dy = (u8)(player.y + 1u);
+                }
+                SPR_DRAW(back, dx, dy, ps_ship_dir[fdir]);
+                prev[bi][n].x = dx; prev[bi][n].y = dy;
                 prev[bi][n].kind = KIND_SPRITE; n++;
+
+                /* muzzle flash: one bright dot a cell ahead in the aim dir. */
+                if (recoil_timer && (recoil_dx || recoil_dy)) {
+                    u8 mx = (u8)(player.x + (u8)(step_sign(recoil_dx) * 8));
+                    s16 my = (s16)player.y + (s16)(step_sign(recoil_dy) * 8);
+                    if (my >= 0 && my <= 184) {
+                        BUL_DRAW(back, mx, (u8)my);
+                        prev[bi][n].x = mx; prev[bi][n].y = (u8)my;
+                        prev[bi][n].kind = KIND_BULLET; n++;
+                    }
+                }
             }
         }
         if (spawn_timer == 0u) {                                   /* enemies */
