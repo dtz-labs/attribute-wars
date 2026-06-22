@@ -77,4 +77,8 @@ them).
 
 ## License
 
-_Not yet chosen — to be added before any public release._
+Code is released under the [MIT License](LICENSE) © 2026 Michał Pasternak.
+
+**Note:** the bundled AY tune `Spectrumizer.pt3` (by *Pator*, ZX-Art id 413568) is a
+third-party asset and is **not** covered by the MIT license — its redistribution
+terms must be confirmed with the original author before any public release.
