@@ -34,67 +34,66 @@
         EXTERN  _spectrumizer_pt3       ; tune.asm: the PT3 module (label = addr)
 
 ; ---------------------------------------------------------------------------
-; Candidate port schemes, tried in order. Triple = (select, data, read).
-;   128K/+2/+3 (and 48K+AY): select 0xFFFD, write 0xBFFD, read 0xFFFD
-;   TS2068 / TC2068:         select 0x00F5, write 0x00F6, read 0x00F6
-; A zero select terminates the table.
+; Latched by _ay_detect; read by the output path. Local (not PUBLIC).
 ; ---------------------------------------------------------------------------
-ay_pairs:
-        defw    0xFFFD, 0xBFFD, 0xFFFD
-        defw    0x00F5, 0x00F6, 0x00F6
-        defw    0x0000, 0x0000, 0x0000
-
-; Latched once by _ay_detect; read by the output path. Local (not PUBLIC).
 ay_sel: defw    0
 ay_dat: defw    0
 ay_rd:  defw    0
 
+; "Timex" exactly as it sits at HOME-ROM offset 0x113D on a TS2068/TC2068 (the
+; "(c) 1983 Timex Computer Corp" line). A TC2048 (modified-Spectrum ROM) has Z80
+; code at that offset, never this string -- so it identifies a 2068 with a pure
+; ROM read, touching no port. Verified against ZEsarUX's ts2068.rom/tc2048.rom.
+sig_timex:
+        defb    'T','i','m','e','x'
+SIG_ADDR equ 0x113D
+
 ; ---------------------------------------------------------------------------
-; u8 ay_detect(void) -- probe each scheme; on the first that echoes a written
-; pattern back from R0 (twice, to defeat the floating bus), latch its ports and
-; return 1. Return 0 if none answers (beeper-only machine -> silent music).
+; u8 ay_detect(void) -- return 1 (and latch the AY ports) if music can play.
+; Two SAFE steps, in order:
+;   1. Probe the standard 0xFFFD/0xBFFD AY. Both are ODD ports, so they can
+;      never be the ULA (which decodes EVEN ports) -- safe on every machine.
+;      Covers a ZX 128/+2/+3 and any TC2048/48K with a standard AY interface.
+;   2. If absent, ROM-signature the machine: a TS2068/TC2068 has ASCII "Timex"
+;      at 0x113D; a TC2048 does not. ROM reads have no side effects, so a TC2048
+;      is never disturbed. ONLY on a confirmed 2068 do we enable the AY at
+;      0xF5/0xF6 -- there 0xF6 is the AY; on a TC2048 it would be the ULA, so we
+;      must be certain before touching it.
+; Returns 0 (stay silent) on a beeper-only machine.
 ; ---------------------------------------------------------------------------
 _ay_detect:
-        ld      hl,ay_pairs
-det_next:
-        ld      e,(hl)
-        inc     hl
-        ld      d,(hl)
-        inc     hl
-        ld      a,e
-        or      d
-        jr      z,det_fail              ; select==0 -> end of table
+        ; --- step 1: standard location (odd ports, ULA-safe) ---
+        ld      de,0xFFFD
         ld      (ay_sel),de
-        ld      c,(hl)
-        inc     hl
-        ld      b,(hl)
-        inc     hl
+        ld      bc,0xBFFD
         ld      (ay_dat),bc
-        ld      c,(hl)
-        inc     hl
-        ld      b,(hl)
-        inc     hl
+        ld      bc,0xFFFD
         ld      (ay_rd),bc
-        push    hl                      ; save table cursor
-        call    ay_probe                ; A=1 if both patterns echo
-        pop     hl
+        call    ay_probe
         or      a
-        jr      nz,det_ok
-        jr      det_next
-det_ok:
+        ret     nz                      ; standard AY found -> use it (A=1)
+
+        ; --- step 2: ROM signature for a TS2068/TC2068 ---
+        ld      hl,SIG_ADDR
+        ld      de,sig_timex
+        ld      b,5
+sig_cmp:
+        ld      a,(de)
+        cp      (hl)
+        jr      nz,det_fail             ; mismatch -> not a 2068
+        inc     hl
+        inc     de
+        djnz    sig_cmp
+        ; confirmed TS2068/TC2068 -> latch its AY at 0xF5 (select) / 0xF6 (data+read)
+        ld      de,0x00F5
+        ld      (ay_sel),de
+        ld      bc,0x00F6
+        ld      (ay_dat),bc
+        ld      (ay_rd),bc
         ld      a,1
-        jr      det_ret
+        ret
 det_fail:
         xor     a
-det_ret:
-        ; Probing the TS2068 scheme touches port 0xF6, which is the ULA on a
-        ; non-TS2068 machine (border bits 0-2 + beeper bit 4). Reset the ULA so
-        ; that one-time blip leaves no visible/audible trace. (Harmless on a real
-        ; TS2068: its 0xFE ULA is separate from the 0xF5/0xF6 AY.)
-        push    af
-        xor     a
-        out     (0xFE),a                ; border black, beeper low
-        pop     af
         ret
 
 ; ay_probe -- ROBUST presence test on the latched ports. A=1 only if a real AY

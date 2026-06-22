@@ -88,10 +88,24 @@ The tune is **"Spectrumizer" by Pator** ([ZX-Art](https://zxart.ee/eng/authors/p
 Lost Party 2023). Pator has sadly passed away — **R.I.P., and thank you for the music.**
 
 Playback uses Sergey Bulba's Vortex Tracker II PT3 player (vendored from z88dk),
-ticked once per frame from the main loop. A small detection + port-routing layer
-(`src/music_ay.asm`) probes for the chip and supports both the 128K
-(`0xFFFD`/`0xBFFD`) and TS2068 (`0xF5`/`0xF6`) AY port schemes; the beeper SFX
-(`sfx.asm`) are untouched and mix over the music in hardware.
+ticked once per frame from the main loop; the beeper SFX (`sfx.asm`) are untouched
+and mix over the music in hardware.
+
+**How the chip is found** (`src/music_ay.asm`) — designed to never disturb a
+TC2048: first probe the *standard* AY at `0xFFFD`/`0xBFFD`. Those are **odd** ports,
+so they can never be confused with the ULA — this safely covers the ZX 128K and any
+TC2048/48K fitted with a standard AY interface. If none answers, identify the
+machine by **ROM signature**: a TS2068/TC2068 has the string `"Timex"` at ROM
+`0x113D` (its 1983 copyright line), a TC2048 does not — and *only* on a confirmed
+2068 do we enable the native AY at `0xF5`/`0xF6`. (`0xF6` is an **even** port = the
+ULA on a TC2048, so it is touched only once the ROM proves we are on a 2068;
+blindly probing it scrambles the border + beeper.)
+
+> **2068 note:** AY music on a TS2068/TC2068 is detected via the **native Timex HOME
+> ROM**. If you run the game through a *Spectrum-emulator cartridge* (which swaps in
+> the TC2048 ROM), the `"Timex"` signature won't match and the music stays silent —
+> use the native ROM for AY music on a 2068. (Plugging a 48K/Spectrum ROM into a
+> 2068 and expecting AY music is, reasonably, on you.)
 
 ## License
 

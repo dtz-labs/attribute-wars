@@ -1,19 +1,17 @@
 #!/bin/sh
-# run-zesarux-ay.sh -- launch the game on ZEsarUX as a Timex TC2068, the Timex
-# machine that has BOTH the SCLD (so the page-flip video works) AND an AY-3-8912
-# (so the chiptune music plays). Use this to hear/verify the AY music; the plain
-# ./run-zesarux.sh runs the beeper-only TC2048, where the music is correctly
-# silent.
+# run-zesarux-ay.sh -- launch the game on ZEsarUX as a Timex TC2068 to HEAR the
+# AY music. The TC2068 has the SCLD (so the page-flip video works) AND a native
+# AY-3-8912; the game's runtime detection finds it by ROM signature (the 2068
+# HOME ROM has "Timex" at 0x113D) and drives the AY at 0xF5/0xF6. The plain
+# ./run-zesarux.sh runs the beeper-only TC2048, where music is correctly silent.
 #
-# The TC2068's AY answers on ports 0x00F5/0x00F6 -- this exercises the TS2068
-# port scheme in src/music_ay.asm's runtime detection. (The 128K scheme
-# 0xFFFD/0xBFFD is what you get if you instead enable an AY on the TC2048 model
-# via ZEsarUX's Audio menu -- a useful second check, but that needs the GUI.)
-#
-# NOTE: the TC2068 uses the Timex ROM, not the Spectrum-compatible TC2048 ROM.
-# If the game does not boot here, fall back to: ./run-zesarux.sh with the AY
-# enabled in ZEsarUX (Settings -> Audio -> AY chip), which keeps the SCLD video
-# and adds an AY on the 128K port scheme.
+# Notes:
+#   - This exercises the full TC2068 path: ROM-signature detection -> 0xF6 AY.
+#   - The TC2068 HOME ROM differs from the Spectrum-compatible TC2048 ROM, so the
+#     8x8 text font may render differently (a separate concern from the music).
+#     If you want guaranteed-correct video while still hearing music, use a ZX
+#     128K instead (`--machine 128k`): the title screen renders and the AY at the
+#     standard 0xFFFD is detected, but in-game page-flip video is absent there.
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
