@@ -273,22 +273,6 @@ static void death_anim(u8 px, u8 py)
                 put_cell(col, row, v);
             }
         }
-        /* Scatter single BLACK pixels across the blast (the fire cells have ink 0,
-         * so a set bit shows as a black speck) -> a grainy, "chropowaty" look.
-         * Both bitmaps, since the frozen death scene doesn't page-flip. */
-        {
-            u8 k;
-            for (k = 0; k < 24u; k++) {
-                s16 ppx = (s16)((s16)cx * 8 + 4) + (((s16)rng_byte() - 128) >> 1);
-                s16 ppy = (s16)((s16)cy * 8 + 4) + (((s16)rng_byte() - 128) >> 1);
-                if (ppx >= 0 && ppx < 256 && ppy >= 0 && ppy < 192) {
-                    u8 m = (u8)(0x80u >> ((u8)ppx & 7u));
-                    u8 cb = (u8)((u8)ppx >> 3);
-                    scld_scanline(SCLD_SCREEN_A, (u8)ppy)[cb] |= m;
-                    scld_scanline(SCLD_SCREEN_B, (u8)ppy)[cb] |= m;
-                }
-            }
-        }
         /* Death explosion sound, SYNCED with the growing fireball: the scene is
          * frozen here (only the fireball attrs draw) so the frame budget is free
          * -- a loud crackle every expansion frame. */
