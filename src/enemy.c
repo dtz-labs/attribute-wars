@@ -196,11 +196,20 @@ void enemies_spawn(enemies_t *es, u8 wave)
             e->alive = 1u;
             /* Assign level: first nb bounce, then nc chase, then nh hunter. */
             if (i < nb) {
-                e->level = ENEMY_BOUNCE;
-                /* (3) Two rng_byte() per BOUNCER for dx/dy initial direction.
-                 *     Chasers/hunters ignore dx/dy, so we draw nothing for them. */
-                e->dx = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
-                e->dy = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
+                /* Bouncer: a random variant -- ball (diagonal), vertical-only,
+                 * or horizontal-only -- set by the dx/dy it spawns with. (3)
+                 * rng_byte() per bouncer: [variant, sx, sy]. (Chasers/hunters
+                 * ignore dx/dy, so they draw no rng.) */
+                u8 var = (u8)(rng_byte() % 3u);
+                s8 sx  = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
+                s8 sy  = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
+                if (var == 1u) {                 /* vertical-only  */
+                    e->level = ENEMY_BOUNCE_V; e->dx = (s8)0; e->dy = sy;
+                } else if (var == 2u) {          /* horizontal-only*/
+                    e->level = ENEMY_BOUNCE_H; e->dx = sx; e->dy = (s8)0;
+                } else {                         /* diagonal ball  */
+                    e->level = ENEMY_BOUNCE;   e->dx = sx; e->dy = sy;
+                }
             } else if (i < (u8)(nb + nc)) {
                 e->level = ENEMY_CHASE;
                 e->dx = (s8)0;

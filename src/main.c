@@ -75,7 +75,9 @@ static u8     prevn[2];
 /* Pre-shifted sprite tables (built once at startup from the 8-byte source art).
  * Bullets/thruster are not sprites -- they use the cheap bul_draw/bul_erase. */
 static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
-static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer */
+static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer (all-dir) */
+static u8 ps_enemy_vbounce[SPR_PRESHIFT_SIZE];  /* level 4 vertical bouncer  */
+static u8 ps_enemy_hbounce[SPR_PRESHIFT_SIZE];  /* level 5 horizontal bouncer*/
 static u8 ps_enemy_chase[SPR_PRESHIFT_SIZE];    /* level 2 chaser  */
 static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
 /* (the HUD life-heart pre-shift table now lives in hud.c) */
@@ -83,8 +85,10 @@ static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
 /* Pick the pre-shifted table for an enemy's behaviour level. */
 static const u8 *enemy_sprite(u8 level)
 {
-    if (level == ENEMY_HUNTER) return ps_enemy_hunter;
-    if (level == ENEMY_CHASE)  return ps_enemy_chase;
+    if (level == ENEMY_HUNTER)   return ps_enemy_hunter;
+    if (level == ENEMY_CHASE)    return ps_enemy_chase;
+    if (level == ENEMY_BOUNCE_V) return ps_enemy_vbounce;
+    if (level == ENEMY_BOUNCE_H) return ps_enemy_hbounce;
     return ps_enemy;
 }
 
@@ -108,11 +112,38 @@ static s8 step_sign(s8 v)
     return 0;
 }
 
-/* Background colour, page-flip helper, and the ATTR macro now live in hud.c /
- * hud.h: score_cell_attr() replaces bg_attr() (the score is rendered as big
- * attribute digits behind the action) and hud_paint_background() replaces
- * bg_paint(). put_attr() is shared from hud.c so the fx/death/telegraph paths
- * still write both attribute blocks. */
+/* Background attribute for one cell: a bright-magenta frame all the way around
+ * the screen (rows 0/23 + cols 0/31), with WHITE ink so the HUD text/sprites
+ * drawn on the frame stay readable, over a blue/black checker floor. Used both
+ * to paint the arena and to RESTORE a cell after an explosion / telegraph pulse.
+ * (put_attr() + the ATTR macro are shared from hud.h.) */
+static u8 bg_attr(u8 row, u8 col)
+{
+    if (row == 0u || row == 23u || col == 0u || col == 31u) {
+        return ATTR(1, 3, 7);          /* frame: bright magenta, white ink    */
+    }
+    if ((u8)((row + col) & 1u)) {
+        return ATTR(0, 1, 7);          /* dark-blue checker                   */
+    }
+    return ATTR(0, 0, 7);              /* black checker                       */
+}
+
+/* Paint the whole arena into BOTH attribute blocks (identical on both screens,
+ * so the page-flip never disturbs colour). */
+static void bg_paint(void)
+{
+    u8 *a = (u8 *)SCLD_ATTRS_A;
+    u8 *b = (u8 *)SCLD_ATTRS_B;
+    u8  row, col;
+    u16 i = 0;
+    for (row = 0; row < 24u; row++) {
+        for (col = 0; col < 32u; col++, i++) {
+            u8 v = bg_attr(row, col);
+            a[i] = v;
+            b[i] = v;
+        }
+    }
+}
 
 /* ---- enemy-hit explosions: brief colour pops, NO game freeze ----
  * A small pool of timed attribute bursts. An enemy death spawns one at its cell;
@@ -181,7 +212,7 @@ static void fx_render(void)
                     continue;
                 }
                 put_attr((u8)row, (u8)c,
-                         restore ? score_cell_attr((u8)row, (u8)c) : colr);
+                         restore ? bg_attr((u8)row, (u8)c) : colr);
             }
         }
     }
@@ -241,6 +272,27 @@ static void death_anim(u8 px, u8 py)
                 put_cell(col, row, v);
             }
         }
+        /* Scatter single BLACK pixels across the blast (the fire cells have ink 0,
+         * so a set bit shows as a black speck) -> a grainy, "chropowaty" look.
+         * Both bitmaps, since the frozen death scene doesn't page-flip. */
+        {
+            u8 k;
+            for (k = 0; k < 24u; k++) {
+                s16 ppx = (s16)((s16)cx * 8 + 4) + (((s16)rng_byte() - 128) >> 1);
+                s16 ppy = (s16)((s16)cy * 8 + 4) + (((s16)rng_byte() - 128) >> 1);
+                if (ppx >= 0 && ppx < 256 && ppy >= 0 && ppy < 192) {
+                    u8 m = (u8)(0x80u >> ((u8)ppx & 7u));
+                    u8 cb = (u8)((u8)ppx >> 3);
+                    scld_scanline(SCLD_SCREEN_A, (u8)ppy)[cb] |= m;
+                    scld_scanline(SCLD_SCREEN_B, (u8)ppy)[cb] |= m;
+                }
+            }
+        }
+        /* Death explosion sound, SYNCED with the growing fireball: the scene is
+         * frozen here (only the fireball attrs draw) so the frame budget is free
+         * -- a loud crackle every expansion frame. */
+        sfx_noise();
+        sfx_noise();
         scld_wait();
         if (f >= (u8)(maxR - 1u)) {
             scld_wait();                                        /* brief hold full */
@@ -259,7 +311,7 @@ static void telegraph_blink(const enemies_t *es, u8 tk)
     u8 i, on = (u8)((tk & 8u) != 0u);    /* toggle every 8 frames */
     for (i = 0; i < MAX_ENEMIES; i++, e++) {
         u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-        put_attr(row, col, on ? ATTR(0, 2, 7) : score_cell_attr(row, col));  /* soft red */
+        put_attr(row, col, on ? ATTR(0, 2, 7) : bg_attr(row, col));  /* soft red */
     }
 }
 
@@ -269,7 +321,7 @@ static void telegraph_clear(const enemies_t *es)
     u8 i;
     for (i = 0; i < MAX_ENEMIES; i++, e++) {
         u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-        put_attr(row, col, score_cell_attr(row, col));
+        put_attr(row, col, bg_attr(row, col));
     }
 }
 
@@ -323,6 +375,23 @@ static void put_score_digits(u8 col, u8 row, const score_t *s)
     }
 }
 
+/* HUD score at (col 1, row 23), redrawing ONLY the digits that changed since the
+ * last call (cache) -- so a per-shot -5 doesn't repaint all six glyphs every
+ * shot. Pass force=1 after a scld_clear wiped the score bitmap (init/respawn). */
+static u8 g_score_cache[6] = { 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu };
+
+static void hud_score(const score_t *s, u8 force)
+{
+    u8 i;
+    for (i = 0; i < 6u; i++) {
+        if (force || s->digits[i] != g_score_cache[i]) {
+            g_score_cache[i] = s->digits[i];
+            put_char(SCLD_SCREEN_A, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
+            put_char(SCLD_SCREEN_B, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
+        }
+    }
+}
+
 /* Render a u8 (0..255) as up to 3 right-aligned decimal chars into BOTH bitmaps.
  * Only /10 and /100 on a small u8 — cheap, no runtime-value division. */
 static void put_u8(u8 col, u8 row, u8 v)
@@ -347,6 +416,23 @@ static void put_text_both(u8 col, u8 row, const char *s)
 {
     put_text(SCLD_SCREEN_A, col, row, s);
     put_text(SCLD_SCREEN_B, col, row, s);
+}
+
+/* Dash readiness: a single dot on the top frame (col 15) -- bright GREEN when
+ * the dash is ready (dash_cd==0), plain magenta frame while charging. Attribute
+ * only + cached (one put_attr on a state change), so the common frame pays
+ * nothing. (The earlier ">" arrows via put_char dragged the whole game.) */
+static u8 g_dash_dot = 0xFFu;     /* reset (=0xFF) wherever the HUD is invalidated */
+
+static void hud_dash_dot(u8 dash_cd)
+{
+    u8 rdy = (u8)(dash_cd == 0u);
+    if (rdy == g_dash_dot) {
+        return;                                       /* no state change */
+    }
+    g_dash_dot = rdy;
+    put_attr(0u, 15u, (u8)(rdy ? ATTR(1, 4, 0)        /* green dot: ready */
+                               : ATTR(1, 3, 7)));     /* frame: charging  */
 }
 
 /*
@@ -378,9 +464,12 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
 
     for (;;) {
         intent_t in;
-        input_read(DIR_NONE, &in);    /* scheme-agnostic FIRE read */
-        if (in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
-            return 0u;                 /* resume from the death wave */
+        input_read(DIR_NONE, &in);    /* scheme-agnostic read */
+        /* CONTINUE on the FIRE button or SPACE. In the twin-stick schemes the
+         * FIRE button maps to BOOST (scheme A/C) or fire-in-heading (scheme B),
+         * so accept either intent here, plus SPACE directly. */
+        if (in.boost || in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
+            return 0u;                 /* resume from the death wave, score 0 */
         }
         if (in_key_pressed(IN_KEY_SCANCODE_q)) {
             return 1u;                 /* fresh game */
@@ -534,9 +623,11 @@ int main(void)
     rng_seed(0xACE1u);
 
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
-    spr_preshift(ps_enemy,        spr_enemy);   /* build pre-shifted tables once */
-    spr_preshift(ps_enemy_chase,  spr_enemy_chase);
-    spr_preshift(ps_enemy_hunter, spr_enemy_hunter);
+    spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
+    spr_preshift(ps_enemy_vbounce, spr_enemy_vbounce);
+    spr_preshift(ps_enemy_hbounce, spr_enemy_hbounce);
+    spr_preshift(ps_enemy_chase,   spr_enemy_chase);
+    spr_preshift(ps_enemy_hunter,  spr_enemy_hunter);
     hud_init();                                  /* build the HUD heart sprite */
 
     /* Title + control-scheme menu; the choice drives input_read() all game. */
@@ -545,7 +636,8 @@ int main(void)
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
     game_new(&g);                     /* wave 1, score 0, START_LIVES/SHIELDS   */
-    hud_paint_background(&g.score);   /* paint score-digit bg into both blocks  */
+    bg_paint();                       /* checker + frame into both attr blocks  */
+    hud_score(&g.score, 1u);          /* full score draw after the clear        */
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
@@ -554,10 +646,9 @@ int main(void)
                                               * telegraph (when enemies go live) */
     wave_timer = wave_total;
     hud_invalidate();                 /* force first widget paint               */
+                    g_dash_dot = 0xFFu;
     hud_draw_lives(g.lives);
     hud_draw_shields(g.shields);
-    hud_draw_timer(wave_timer, wave_total);   /* full bar                       */
-    hud_draw_boost(player.boost_energy);
     prevn[0] = 0;
     prevn[1] = 0;
 
@@ -583,7 +674,7 @@ int main(void)
                 cooldown = FIRE_COOLDOWN;
                 /* economy + sound + recoil — only on a real shot (spec §3.5/§4/§8) */
                 score_sub(&g.score, 5u);
-                hud_score_changed(&g.score);
+                hud_score(&g.score, 0u);
                 sfx_play(SFX_SHOOT);             /* ~1ms click, safe in-loop      */
                 recoil_timer = RECOIL_FRAMES;    /* kick the ship back ~2 frames  */
                 recoil_dx    = in.aim_dx;        /* store aim for the draw offset */
@@ -610,40 +701,42 @@ int main(void)
             if (wave_timer > 0u) {
                 wave_timer--;
             }
-            /* Redraw the timer bar only when the displayed second changes. */
-            {
-                u16 secs = (u16)(wave_timer / 50u);
-                if (secs != wave_secs) {
-                    wave_secs = secs;
-                    hud_draw_timer(wave_timer, wave_total);
-                }
-            }
 
             /* ---- enemies act; bullets destroy them (hit-pop + points per kill) ---- */
             enemies_update(&enemies, player.x, player.y, &bullets);
+            /* A bullet is the ONLY way collide kills an enemy, so on the common
+             * bulletless frame the whole snapshot/collide/rescan is a no-op --
+             * skip it. When bullets are live, snapshot the alive flags, run
+             * collide, and only rescan for kills if it actually reported any. */
             {
-                u8 alive_before[MAX_ENEMIES];
-                u8 scored = 0u;
-                for (i = 0; i < MAX_ENEMIES; i++) {
-                    alive_before[i] = enemies.e[i].alive;
+                u8 any_bullet = 0u;
+                for (i = 0; i < MAX_BULLETS; i++) {
+                    if (bullets.b[i].active) { any_bullet = 1u; break; }
                 }
-                (void)collide_bullets_enemies(&bullets, &enemies);
-                for (i = 0; i < MAX_ENEMIES; i++) {
-                    if (alive_before[i] && !enemies.e[i].alive) {
-                        u8 xl = score_add(&g.score,
-                                          score_enemy_points(enemies.e[i].level));
-                        g.lives = (u8)(g.lives + xl);          /* extra life(s)  */
-                        if (xl) {
-                            sfx_play(SFX_EXTRA_LIFE);
-                            hud_draw_lives(g.lives);
-                        }
-                        fx_spawn(enemies.e[i].x, enemies.e[i].y);
-                        sfx_play(SFX_EXPLODE);                 /* short, in-loop  */
-                        scored = 1u;
+                if (any_bullet) {
+                    u8 alive_before[MAX_ENEMIES];
+                    for (i = 0; i < MAX_ENEMIES; i++) {
+                        alive_before[i] = enemies.e[i].alive;
                     }
-                }
-                if (scored) {
-                    hud_score_changed(&g.score);               /* points landed   */
+                    if (collide_bullets_enemies(&bullets, &enemies)) {
+                        u8 scored = 0u;
+                        for (i = 0; i < MAX_ENEMIES; i++) {
+                            if (alive_before[i] && !enemies.e[i].alive) {
+                                u8 xl = score_add(&g.score,
+                                          score_enemy_points(enemies.e[i].level));
+                                g.lives = (u8)(g.lives + xl);  /* extra life(s)  */
+                                if (xl) {
+                                    sfx_play(SFX_EXTRA_LIFE);
+                                    hud_draw_lives(g.lives);
+                                }
+                                fx_spawn(enemies.e[i].x, enemies.e[i].y);
+                                scored = 1u;
+                            }
+                        }
+                        if (scored) {
+                            hud_score(&g.score, 0u);           /* points landed   */
+                        }
+                    }
                 }
             }
 
@@ -659,7 +752,7 @@ int main(void)
                     }
                     sfx_play(SFX_BONUS);          /* longer tone; we're between
                                                    * waves so blocking is fine    */
-                    hud_score_changed(&g.score);
+                    hud_score(&g.score, 0u);
                 }
                 /* advance the difficulty index (capped so the u8 never wraps) */
                 if (g.wave < (u8)WAVE_MAX) {
@@ -677,16 +770,15 @@ int main(void)
                     g.shields--;
                     score_sub(&g.score, 10u);
                     sfx_play(SFX_HIT);               /* short, in-loop            */
-                    hud_score_changed(&g.score);
+                    hud_score(&g.score, 0u);
                     invuln = INVULN_FRAMES;
                     hud_draw_shields(g.shields);
                 } else {
-                    /* ---- shields gone -> DEATH: -100, KABOOM + death tone ---- */
+                    /* ---- shields gone -> DEATH: -100, KABOOM with the explosion
+                     * crackle playing DURING the death animation (inside
+                     * death_anim, synced with the growing fireball). ---- */
                     score_sub(&g.score, 100u);
-                    death_anim(player.x, player.y);  /* scene freezes; frozen ->  */
-                    sfx_play(SFX_DEATH);             /* long tone is safe here     */
-                    scld_clear(SCLD_SCREEN_A);
-                    scld_clear(SCLD_SCREEN_B);
+                    death_anim(player.x, player.y);
                     if (g.lives > 0u) {
                         g.lives--;
                     }
@@ -702,7 +794,10 @@ int main(void)
                     } else {
                         g.shields = START_SHIELDS;    /* new life, full shields    */
                     }
-                    hud_paint_background(&g.score);   /* repaint score-digit bg     */
+                    scld_clear(SCLD_SCREEN_A);        /* wipe the death-anim AND the */
+                    scld_clear(SCLD_SCREEN_B);        /* GAME OVER text off both pages */
+                    bg_paint();                       /* repaint checker + frame    */
+                    hud_score(&g.score, 1u);          /* full score after the clear */
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
@@ -712,10 +807,9 @@ int main(void)
                     wave_secs  = 0xFFFFu;
                     spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn     */
                     hud_invalidate();                 /* bitmaps + bars were wiped  */
+                    g_dash_dot = 0xFFu;
                     hud_draw_lives(g.lives);
                     hud_draw_shields(g.shields);
-                    hud_draw_timer(wave_timer, wave_total);
-                    hud_draw_boost(player.boost_energy);
                     cooldown = 0;
                     recoil_timer = 0u;
                     invuln = INVULN_FRAMES;
@@ -788,7 +882,13 @@ int main(void)
         }
         prevn[bi] = n;
 
-        hud_draw_boost(player.boost_energy);  /* cheap: cached, redraw on change */
+        hud_dash_dot(player.dash_cd);   /* green dot on the top frame = dash ready */
+
+        /* Explosion sound SYNCED with the animation: while any hit-pop is on
+         * screen, emit a short noisy crackle each frame so the whole burst is
+         * audible together with the graphics. Cheap (~2.5k T, only during fx). */
+        { u8 fi; for (fi = 0; fi < MAX_FX; fi++) { if (fx[fi].t) { sfx_noise(); break; } } }
+
         fx_render();                  /* animate enemy-hit colour pops (attrs) */
         scld_present();               /* HALT to 50 Hz, then page-flip */
     }

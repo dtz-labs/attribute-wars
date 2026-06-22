@@ -13,10 +13,18 @@
 #define MAX_ENEMIES 6      /* 8 overran the 50 Hz frame budget; 6 holds it */
 #define ENEMY_SPEED 1        /* pixels per frame (<= player so they're evadable) */
 
-/* Behaviour levels. (1 is intentionally unused for now.) */
-#define ENEMY_BOUNCE 0       /* drifts diagonally, bounces off the walls       */
-#define ENEMY_CHASE  2       /* steers toward the player                        */
-#define ENEMY_HUNTER 3       /* chases the player AND dodges nearby bullets     */
+/* Behaviour levels. (1 is intentionally unused for now.) The three BOUNCE
+ * variants share the SAME update path (enemies_update keeps their stored dx/dy
+ * and reflects off the walls); they differ only in the dx/dy they SPAWN with:
+ *   BOUNCE   = (dx!=0, dy!=0) -> diagonal, bounces off all 4 walls (like a ball)
+ *   BOUNCE_V = (dx==0)        -> moves up/down only, bounces off top/bottom
+ *   BOUNCE_H = (dy==0)        -> moves left/right only, bounces off the sides
+ * No new asm: enemies_update treats any non-CHASE/HUNTER level as a bouncer. */
+#define ENEMY_BOUNCE   0     /* diagonal, bounces off all walls                */
+#define ENEMY_CHASE    2     /* steers toward the player                       */
+#define ENEMY_HUNTER   3     /* chases the player AND dodges nearby bullets    */
+#define ENEMY_BOUNCE_V 4     /* vertical-only bouncer (up/down)                */
+#define ENEMY_BOUNCE_H 5     /* horizontal-only bouncer (left/right)           */
 
 /* Spawn patterns — RNG-picked each wave (no immediate repeat). */
 enum { PAT_PERIMETER, PAT_STAR, PAT_FLANKS, PAT_ROWS, PAT_DIAGONALS, PAT_N };

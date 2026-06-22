@@ -6,15 +6,15 @@
  * in fixed point (1/32 px) -- no floating point. Drawn as an 8x8 directional
  * sprite that turns to face the way it is flying.
  *
- * BOOST: holding the boost input (intent_t.boost) while boost_energy > 0
- * raises the top speed to PLAYER_MAXV_BOOST (4.5 px/frame) and drains energy
- * by BOOST_DRAIN per frame. Releasing boost recharges at BOOST_RECHARGE per
- * frame (capped at BOOST_MAX). With no energy left boost is silently ignored
- * and the ship tops out at the normal PLAYER_MAXV (2.5 px/frame).
+ * DASH: tapping the boost input launches a short, high-speed BURST (a "throw")
+ * in the current move direction -- DASH_FRAMES at DASH_MAXV (5.5 px/frame) with
+ * a snappy ramp -- then a DASH_COOLDOWN before it can fire again. No held-energy
+ * meter; it is a once-in-a-while lunge. After the burst the ship coasts back via
+ * the normal friction (the drift), giving the throw a satisfying follow-through.
  *
- * FRICTION: coast-down step is PLAYER_FRICTION (3/32 px/frame) in both boost
- * and normal mode -- drift distance is identical either way. At 3/32 the ship
- * coasts roughly 27 frames (~0.5 s) from full normal speed before stopping.
+ * FRICTION: coast-down step is PLAYER_FRICTION (3/32 px/frame) in both dash and
+ * normal mode. At 3/32 the ship coasts ~27 frames (~0.5 s) from full normal
+ * speed before stopping.
  */
 #ifndef PLAYER_H
 #define PLAYER_H
@@ -30,19 +30,21 @@
 #define PLAYER_FRICTION 3            /* coast-down per frame when released;
                                       * lower = LONGER drift (applies to both x,y)*/
 
-/* Boost parameters. */
-#define PLAYER_MAXV_BOOST  144       /* boost top speed: 144/32 = 4.5 px/frame  */
-#define PLAYER_ACCEL_BOOST 24        /* ramp-up per frame while boosting         */
-#define BOOST_MAX          100       /* full energy tank                         */
-#define BOOST_DRAIN        2         /* energy consumed per frame while boosting */
-#define BOOST_RECHARGE     1         /* energy regained per frame when not boost */
+/* Dash parameters (the "throw" burst + cooldown). A sharp, SHORT lunge: instant
+ * snap to a high speed for a few frames (~34 px), then the residual velocity is
+ * capped back to PLAYER_MAXV so control returns at once (no long coast tail). */
+#define DASH_MAXV     272     /* burst top speed: 272/32 = 8.5 px/frame         */
+#define DASH_ACCEL    272     /* instant snap to dash speed (1 frame)           */
+#define DASH_FRAMES   4u      /* burst duration (~0.08 s, ~34 px lunge)         */
+#define DASH_COOLDOWN 75u     /* cooldown before the next dash (~1.5 s)         */
 
 typedef struct {
     u8  x, y;           /* pixel position (integer; for render/collision)  */
     s16 px, py;         /* fixed-point position (pixel << PLAYER_SUB)       */
     s16 vx, vy;         /* velocity, fixed-point per frame                  */
     u8  facing;         /* DIR_* the ship points at (DIR_NONE at start)     */
-    u8  boost_energy;   /* current boost energy [0, BOOST_MAX]              */
+    u8  dash_t;         /* frames left in the active dash (0 = not dashing) */
+    u8  dash_cd;        /* cooldown frames left (0 = dash ready)            */
 } player_t;
 
 void player_init(player_t *p, u8 x, u8 y);

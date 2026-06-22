@@ -9,7 +9,14 @@
 #include "enemy.h"   /* ENEMY_BOUNCE / CHASE / HUNTER constants */
 
 /* Points table indexed by enemy level (size 4; level 1 is intentionally unused). */
-static const u16 enemy_pts[4] = { 200u, 0u, 400u, 600u };
+static const u16 enemy_pts[6] = {
+    200u,   /* 0 ENEMY_BOUNCE   */
+    0u,     /* 1 (unused)       */
+    400u,   /* 2 ENEMY_CHASE    */
+    600u,   /* 3 ENEMY_HUNTER   */
+    200u,   /* 4 ENEMY_BOUNCE_V */
+    200u,   /* 5 ENEMY_BOUNCE_H */
+};
 
 void score_reset(score_t *s)
 {
@@ -102,8 +109,8 @@ void score_sub(score_t *s, u16 pts)
 
 u16 score_enemy_points(u8 level)
 {
-    /* level is ENEMY_BOUNCE(0), ENEMY_CHASE(2), or ENEMY_HUNTER(3).
-     * The table has a hole at index 1 (intentionally unused enemy level). */
+    /* level 0..5 (BOUNCE / - / CHASE / HUNTER / BOUNCE_V / BOUNCE_H);
+     * index 1 is a hole (unused enemy level). */
     return enemy_pts[level];
 }
 

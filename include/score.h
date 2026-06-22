@@ -28,7 +28,7 @@ typedef struct {
 } game_state_t;
 
 #define START_LIVES   2u
-#define START_SHIELDS 3u
+#define START_SHIELDS 1u
 
 /* Zero all digits and extra_tt. */
 void score_reset(score_t *s);

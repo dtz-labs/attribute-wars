@@ -32,4 +32,11 @@ enum {
  */
 void sfx_play(u8 id);
 
+/*
+ * sfx_noise() -- a short, harsh random-pitch crackle (~6k T). Call once PER
+ * FRAME while an explosion is on screen so the whole burst stays noisy.
+ * Host: no-op.
+ */
+void sfx_noise(void);
+
 #endif /* SFX_H */

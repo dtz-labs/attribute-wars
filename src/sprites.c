@@ -37,8 +37,14 @@ const u8 spr_ship_dir[8][8] = {
  * a game sprite (sits padded in its cell). */
 const u8 spr_heart[8] = { 0x00, 0x6C, 0xFE, 0xFE, 0x7C, 0x38, 0x10, 0x00 };
 
-/* Bouncer (level 0) -- a legged alien (drifts & bounces). */
+/* Bouncer (level 0) -- a legged alien (drifts & bounces in all directions). */
 const u8 spr_enemy[8] = { 0x3C, 0x7E, 0xDB, 0xFF, 0xBD, 0xA5, 0x42, 0x24 };
+
+/* Vertical bouncer (level 4) -- bounces only up/down. A tall up/down arrow. */
+const u8 spr_enemy_vbounce[8] = { 0x18, 0x3C, 0x5A, 0x18, 0x18, 0x5A, 0x3C, 0x18 };
+
+/* Horizontal bouncer (level 5) -- bounces only left/right. A wide bar arrow. */
+const u8 spr_enemy_hbounce[8] = { 0x00, 0x42, 0x5A, 0xFF, 0xFF, 0x5A, 0x42, 0x00 };
 
 /* Chaser (level 2) -- a flying saucer, comes straight at you. */
 const u8 spr_enemy_chase[8] = { 0x3C, 0x7E, 0xFF, 0xDB, 0x7E, 0x00, 0x24, 0x42 };

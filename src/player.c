@@ -15,7 +15,8 @@ void player_init(player_t *p, u8 x, u8 y)
     p->vx           = 0;
     p->vy           = 0;
     p->facing       = DIR_NONE;
-    p->boost_energy = BOOST_MAX;
+    p->dash_t       = 0u;
+    p->dash_cd      = 0u;
 }
 
 /* Ease v toward target using the supplied accel step (while target!=0) and
@@ -41,23 +42,25 @@ void player_update(player_t *p, const intent_t *in)
     s8  sx, sy;
     s16 lo, hi;
 
-    /* Determine boost state: active only when requested AND energy remains. */
-    if (in->boost && p->boost_energy > 0) {
-        /* Drain energy, floored at 0. */
-        if (p->boost_energy > BOOST_DRAIN)
-            p->boost_energy = (u8)(p->boost_energy - BOOST_DRAIN);
-        else
-            p->boost_energy = 0;
-        maxv  = PLAYER_MAXV_BOOST;
-        accel = PLAYER_ACCEL_BOOST;
+    /* DASH state machine: a boost request launches a short high-speed BURST in
+     * the move direction -- only when not already dashing, off cooldown, and
+     * actually moving. The burst raises the speed cap + accel; friction stays
+     * PLAYER_FRICTION (the coast/drift is unchanged). When the burst ends, the
+     * cooldown starts. No held-energy meter. */
+    if (in->boost && p->dash_t == 0u && p->dash_cd == 0u
+            && (in->move_dx || in->move_dy)) {
+        p->dash_t = DASH_FRAMES;                 /* launch the throw */
+    }
+    if (p->dash_t > 0u) {
+        maxv  = DASH_MAXV;
+        accel = DASH_ACCEL;
+        p->dash_t--;
+        if (p->dash_t == 0u) {
+            p->dash_cd = DASH_COOLDOWN;          /* burst over -> cool down */
+        }
     } else {
-        /* Recharge energy only when boost is NOT held (or held with 0 energy).
-         * We do NOT recharge while the player is actively requesting boost --
-         * that would cause a 1-frame recharge that immediately re-enables boost
-         * on the next frame when starting from 0. */
-        if (!in->boost && p->boost_energy < BOOST_MAX) {
-            u8 recharged = (u8)(p->boost_energy + BOOST_RECHARGE);
-            p->boost_energy = (recharged > BOOST_MAX) ? BOOST_MAX : recharged;
+        if (p->dash_cd > 0u) {
+            p->dash_cd--;
         }
         maxv  = PLAYER_MAXV;
         accel = PLAYER_ACCEL;
@@ -88,6 +91,16 @@ void player_update(player_t *p, const intent_t *in)
     hi = (s16)((s16)ARENA_B << PLAYER_SUB);
     if (p->py < lo) { p->py = lo; p->vy = 0; }
     else if (p->py > hi) { p->py = hi; p->vy = 0; }
+
+    /* Dash just ended this frame (cd was set to DASH_COOLDOWN above): cap the
+     * big residual dash velocity back to the normal max so the ship doesn't
+     * coast forever -- the dash is a punch, not a launch. */
+    if (p->dash_t == 0u && p->dash_cd == DASH_COOLDOWN) {
+        if (p->vx >  (s16)PLAYER_MAXV)      p->vx =  (s16)PLAYER_MAXV;
+        else if (p->vx < -(s16)PLAYER_MAXV) p->vx = -(s16)PLAYER_MAXV;
+        if (p->vy >  (s16)PLAYER_MAXV)      p->vy =  (s16)PLAYER_MAXV;
+        else if (p->vy < -(s16)PLAYER_MAXV) p->vy = -(s16)PLAYER_MAXV;
+    }
 
     p->x = (u8)(p->px >> PLAYER_SUB);
     p->y = (u8)(p->py >> PLAYER_SUB);

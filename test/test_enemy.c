@@ -67,8 +67,9 @@ static void test_spawn_wave1(void)
     enemies_spawn(&es, 1);
     for (i = 0; i < MAX_ENEMIES; i++) {
         if (es.e[i].alive) {
+            u8 lv = es.e[i].level;
             alive++;
-            if (es.e[i].level == ENEMY_BOUNCE) b++;
+            if (lv == ENEMY_BOUNCE || lv == ENEMY_BOUNCE_V || lv == ENEMY_BOUNCE_H) b++;
             check("x in arena", es.e[i].x >= ARENA_L && es.e[i].x <= ARENA_R);
             check("y in arena", es.e[i].y >= ARENA_T && es.e[i].y <= ARENA_B);
         }
@@ -87,10 +88,11 @@ static void test_spawn_wave8(void)
     enemies_spawn(&es, 8);
     for (i = 0; i < MAX_ENEMIES; i++) {
         if (es.e[i].alive) {
+            u8 lv = es.e[i].level;
             alive++;
-            if (es.e[i].level == ENEMY_BOUNCE) nb++;
-            else if (es.e[i].level == ENEMY_CHASE) nc++;
-            else if (es.e[i].level == ENEMY_HUNTER) nh++;
+            if (lv == ENEMY_BOUNCE || lv == ENEMY_BOUNCE_V || lv == ENEMY_BOUNCE_H) nb++;
+            else if (lv == ENEMY_CHASE) nc++;
+            else if (lv == ENEMY_HUNTER) nh++;
         }
     }
     check("wave8 alive==6", alive == 6u);

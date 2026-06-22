@@ -88,67 +88,42 @@ bp_narrow:
         ret
 
 ; ===========================================================================
-; void erase8_asm(void) -- clear the sprite's 8x8 box (AND keep-masks).
+; void erase8_asm(void) -- clear the sprite's 8x8 box.
+;
+; ZERO-FILL erase: the arena bitmap background is solid black and the render
+; loop erases-all-then-draws-all every frame, so we blind-zero the sprite's
+; byte column(s) rather than AND-masking the exact sprite bits. Any neighbour
+; bits we over-clear get repainted by the draw pass the same frame. This drops
+; the per-call nm0/nm1 shift-loop mask computation AND turns each row's two
+; read-AND-write byte ops into plain stores. (Only ever called for player +
+; enemy sprites, which clamp to [ARENA_T..ARENA_B] -> char rows 1..22, so it
+; never reaches the HUD row 0 or the score-digit bitmap on row 23.)
 ; ===========================================================================
 _erase8_asm:
-        call    setup
+        call    setup           ; HL=addr, B=rows, C=sh, t_bx; Z if rows==0
         ret     z
-        ; nm0 = ~(0xFF >> sh) -> C ; nm1 = ~(0xFF << (8-sh)) -> t_nm1
-        ld      a,(t_sh)
-        ld      d,a
-        ld      a,0xFF
-        inc     d
-        jr      shr_test
-shr_loop:
-        srl     a
-shr_test:
-        dec     d
-        jr      nz,shr_loop
-        cpl
-        ld      c,a             ; C = nm0
-        ld      a,(t_sh)
-        neg
-        add     a,8             ; 8 - sh
-        ld      d,a
-        ld      a,0xFF
-        inc     d
-        jr      shl_test
-shl_loop:
-        add     a,a
-shl_test:
-        dec     d
-        jr      nz,shl_loop
-        cpl
-        ld      (t_nm1),a       ; nm1
-
         ld      a,(t_sh)
         or      a
         jr      z,erase_narrow
         ld      a,(t_bx)
         cp      31
         jr      nc,erase_narrow
-        ld      a,(t_nm1)
-        ld      e,a             ; E = nm1
-
+        ld      c,0             ; C = 0 fill byte (DOWN preserves C)
 erase_wide:
-        ld      a,(hl)
-        and     c
-        ld      (hl),a
+        ld      (hl),c          ; left  byte = 0
         inc     hl
-        ld      a,(hl)
-        and     e
-        ld      (hl),a
+        ld      (hl),c          ; right byte = 0
         dec     hl
         DOWN    dl_erw
         djnz    erase_wide
         ret
 
 erase_narrow:
-        ld      a,(hl)
-        and     c
-        ld      (hl),a
+        ld      c,0             ; C = 0 fill byte
+erase_narrow_l:
+        ld      (hl),c
         DOWN    dl_ern
-        djnz    erase_narrow
+        djnz    erase_narrow_l
         ret
 
 ; ===========================================================================
@@ -317,4 +292,3 @@ setup_rows:
 ; Scratch RAM (program loads in RAM at 0x8000; these sit after the last RET).
 t_sh:   defb    0
 t_bx:   defb    0
-t_nm1:  defb    0

@@ -106,74 +106,79 @@ static void test_diagonal_drift(void)
     CHECK(p.vx == 0 && p.vy == 0);
 }
 
-static void test_init_boost_energy(void)
+static void test_init_dash(void)
 {
     player_t p;
     player_init(&p, 100, 80);
-    CHECK(p.boost_energy == BOOST_MAX);
+    CHECK(p.dash_t == 0u && p.dash_cd == 0u);   /* ready, not dashing */
 }
 
-static void test_boost_faster_and_drains(void)
+static void test_dash_launches_and_is_faster(void)
 {
     player_t p;
     player_init(&p, 100, 80);
     intent_t in = mvb(1, 0, 1);
-    u8 e0 = p.boost_energy;
     u8 k;
-    for (k = 0; k < 10; k++) player_update(&p, &in);
-    CHECK(p.boost_energy < e0);                  /* energy drained */
-    CHECK(p.vx > (s16)(PLAYER_MAXV));            /* exceeds base top speed (fixed-point) */
+    player_update(&p, &in);                       /* frame 1: launch + instant snap */
+    CHECK(p.dash_t > 0u);                          /* mid-burst */
+    CHECK(p.vx > (s16)PLAYER_MAXV);                /* burst exceeds base top speed */
+    for (k = 1; k < DASH_FRAMES; k++) player_update(&p, &in);  /* finish the burst */
+    CHECK(p.dash_t == 0u && p.dash_cd == DASH_COOLDOWN);   /* cooldown started */
+    CHECK(p.vx <= (s16)PLAYER_MAXV);              /* residual velocity capped to normal */
 }
 
-static void test_boost_empty_caps_at_base(void)
+static void test_dash_cooldown_blocks_relaunch(void)
 {
     player_t p;
     player_init(&p, 100, 80);
-    p.boost_energy = 0;
     intent_t in = mvb(1, 0, 1);
     u8 k;
-    for (k = 0; k < 30; k++) player_update(&p, &in);
-    CHECK(p.vx <= (s16)PLAYER_MAXV);             /* no boost without energy */
+    for (k = 0; k < DASH_FRAMES; k++) player_update(&p, &in);  /* full burst */
+    CHECK(p.dash_t == 0u && p.dash_cd > 0u);
+    for (k = 0; k < 10; k++) player_update(&p, &in);   /* still holding boost */
+    CHECK(p.dash_t == 0u);                       /* did NOT relaunch during cooldown */
+    CHECK(p.dash_cd < DASH_COOLDOWN);            /* cooldown ticking down */
 }
 
-static void test_boost_recharge(void)
+static void test_dash_needs_movement(void)
 {
     player_t p;
     player_init(&p, 100, 80);
-    /* Drain some energy by boosting. */
+    intent_t in = mvb(0, 0, 1);                  /* boost held but not moving */
+    u8 k;
+    for (k = 0; k < 5; k++) player_update(&p, &in);
+    CHECK(p.dash_t == 0u && p.dash_cd == 0u);    /* no dash without movement */
+}
+
+static void test_dash_ready_after_cooldown(void)
+{
+    player_t p;
+    player_init(&p, 100, 80);
     intent_t in = mvb(1, 0, 1);
-    u8 k;
-    for (k = 0; k < 10; k++) player_update(&p, &in);
-    u8 e_drained = p.boost_energy;
-    CHECK(e_drained < BOOST_MAX);
-    /* Release boost: energy should recharge. */
-    in = mvb(1, 0, 0);
-    for (k = 0; k < 10; k++) player_update(&p, &in);
-    CHECK(p.boost_energy > e_drained);
-}
-
-static void test_boost_recharge_cap(void)
-{
-    player_t p;
-    player_init(&p, 100, 80);
-    /* Start at full energy, hold no boost -- energy must not exceed BOOST_MAX. */
-    intent_t in = mvb(1, 0, 0);
-    u8 k;
-    for (k = 0; k < 20; k++) player_update(&p, &in);
-    CHECK(p.boost_energy <= BOOST_MAX);
+    u8 k, relaunched = 0u;
+    for (k = 0; k < DASH_FRAMES; k++) player_update(&p, &in);  /* dash 1 */
+    /* Hold boost+move; once the cooldown expires a 2nd dash must fire. */
+    for (k = 0; k < (u8)(DASH_COOLDOWN + 5u); k++) {
+        u8 before = p.dash_t;
+        player_update(&p, &in);
+        if (before == 0u && p.dash_t == (u8)(DASH_FRAMES - 1u)) {
+            relaunched = 1u;                     /* a fresh burst just launched */
+        }
+    }
+    CHECK(relaunched);
 }
 
 int main(void)
 {
     test_init();
-    test_init_boost_energy();
+    test_init_dash();
     test_accel_and_coast();
     test_diagonal_drift();
     test_walls();
-    test_boost_faster_and_drains();
-    test_boost_empty_caps_at_base();
-    test_boost_recharge();
-    test_boost_recharge_cap();
+    test_dash_launches_and_is_faster();
+    test_dash_cooldown_blocks_relaunch();
+    test_dash_needs_movement();
+    test_dash_ready_after_cooldown();
     printf("player: %d checks passed\n", checks);
     return 0;
 }
