@@ -103,6 +103,14 @@ pure-logic, host-tested tier; the per-screen draw/animation lives in `main.c`
 
 ## 4. Component A — in-game backgrounds (Phase 1)
 
+> **Amendment (2026-06-22, as built):** the noisy tier (diamonds/vbands/plasma/
+> starfield) and the per-wave re-roll were **dropped** at the user's request.
+> Shipped behaviour: a new game picks **one of four static shapes** (checker,
+> diagonal, circles, lattice) at random (no immediate repeat) and keeps it for
+> the whole run — respawns and waves never change it. `bgpat_generate` takes no
+> `seed`; `fxtab` is deferred to Phase 2 (where the plasma uses it). The sections
+> below describe the original richer design; treat the amendment as authoritative.
+
 ### Data model
 - `static u8 bg_cells[768]` in `main.c` — the active background (frame ring +
   interior).
