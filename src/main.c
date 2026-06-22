@@ -285,11 +285,57 @@ static void title_attr_row(u8 row, u8 v)
     }
 }
 
+/* ---- title shine-sweep: diagonal glint across "ATTRIBUTE WARS" ----
+ *
+ * The title text occupies row 3, cols 9..22 (14 characters: "ATTRIBUTE WARS").
+ * The sweep diagonal value for cell (col, row) is (col + row).  With a single
+ * title row (row=3) the range is (9+3)=12 .. (22+3)=25.
+ *
+ * sweep position `s` advances each frame over that range, then pauses for
+ * SHINE_PAUSE frames before wrapping back to the start.
+ *
+ * For each title cell the brightness relative to `s` is:
+ *   d = (col + 3) - s
+ *   d == 0  -> BRIGHT WHITE ink (on the sweep line)
+ *   d == 1  -> mid shade (cyan, bright) — the trailing cell
+ *   else    -> base colour (bright cyan)
+ */
+#define SHINE_COL_START  9u   /* first col of "ATTRIBUTE WARS"                 */
+#define SHINE_COL_END   22u   /* last  col of "ATTRIBUTE WARS" (14 chars)      */
+#define SHINE_ROW        3u   /* the title character row                        */
+/* diagonal range: (col+row) for col in [9..22], row=3 → [12..25] */
+#define SHINE_S_MIN     12u   /* (SHINE_COL_START + SHINE_ROW)                 */
+#define SHINE_S_MAX     25u   /* (SHINE_COL_END   + SHINE_ROW)                 */
+#define SHINE_PAUSE     60u   /* frames to hold before restarting the sweep    */
+
+/* Paint the title row attribute cells for the current sweep position. */
+static void title_shine(u8 s)
+{
+    u8 col;
+    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)SHINE_ROW * 32u;
+    for (col = SHINE_COL_START; col <= SHINE_COL_END; col++) {
+        u8 diag = (u8)(col + SHINE_ROW);   /* == col + 3 */
+        u8 attr;
+        if (diag == s) {
+            attr = ATTR(1, 0, 7);          /* BRIGHT WHITE ink — on the glint  */
+        } else if (diag == (u8)(s + 1u)) {
+            attr = ATTR(1, 0, 6);          /* BRIGHT YELLOW — trailing cell     */
+        } else {
+            attr = ATTR(1, 0, 5);          /* bright cyan — base title colour   */
+        }
+        a[col] = attr;
+    }
+}
+
 /* Draw the menu, poll keys 1/2/3 (pick a control scheme) and 0 (start).
  * Returns the chosen CTRL_* scheme. */
 static u8 title_screen(void)
 {
     u8 sel = CTRL_KEMPSTON_MOVE;
+    /* Sweep state: s is the current diagonal position; pause counts down between
+     * passes. Start s at SHINE_S_MIN so the glint enters from the left edge. */
+    u8 s     = SHINE_S_MIN;
+    u8 pause = 0u;
 
     scld_clear(SCLD_SCREEN_A);
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
@@ -302,7 +348,7 @@ static u8 title_screen(void)
     put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
     put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
 
-    title_attr_row(3, ATTR(1, 0, 5));      /* bright-cyan title */
+    title_attr_row(3, ATTR(1, 0, 5));      /* bright-cyan title (base colour) */
 
     for (;;) {
         /* highlight the selected scheme bright yellow; START is bright green */
@@ -310,6 +356,23 @@ static u8 title_screen(void)
         title_attr_row(10, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
         title_attr_row(12, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
         title_attr_row(15, ATTR(1, 0, 4));
+
+        /* ---- shine sweep: paint title-letter row (row 3) only --------------- */
+        title_shine(s);
+
+        /* Advance (or pause) the sweep position */
+        if (pause > 0u) {
+            pause--;
+            if (pause == 0u) {
+                s = SHINE_S_MIN;           /* restart the sweep */
+            }
+        } else {
+            if (s < SHINE_S_MAX) {
+                s++;
+            } else {
+                pause = SHINE_PAUSE;       /* glint exited right — begin pause  */
+            }
+        }
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
