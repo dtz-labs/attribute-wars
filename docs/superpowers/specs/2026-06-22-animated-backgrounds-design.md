@@ -46,7 +46,10 @@ magenta paper, white ink). Background patterns only touch the **interior**
 `bg_attr(row,col)`. If the chosen pattern flows through `bg_attr`, every restore
 path follows it automatically with no further change.
 
-### Measured paint cost (z88dk-ticks, `src/measure_bg.c`, 100 iters ÷ 100)
+### Measured paint cost (z88dk-ticks, throwaway harness, 100 iters ÷ 100)
+
+These numbers were measured once with a throwaway harness (since removed); they
+are recorded here so the architecture decision below stands on its own.
 
 | Method | T-states | Fraction of a 69,888 T frame |
 |---|---|---|
@@ -220,9 +223,9 @@ Each phase is independently shippable and verified in ZEsarUX.
 
 ## 8. Tooling
 
-- Keep `src/measure_bg.c` (the throwaway used to measure paint cost) as a
-  measurement artifact alongside `measure_main.c`; add a `measure_bg.sh` mirror
-  of `measure.sh` if convenient.
+- Paint-cost numbers (§2) were taken with a one-off harness, now removed. For
+  future perf work, mirror the `measure_main.c` + `measure.sh` + `z88dk-ticks`
+  pattern (border-OUT markers, addresses from the `.map`).
 - Add a globe per-frame measurement in Phase 3.
 - Per CLAUDE.md: always `z88dk-ticks`-measure before claiming a perf change.
 
