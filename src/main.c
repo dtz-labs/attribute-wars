@@ -42,7 +42,9 @@
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
 #include "hud.h"           /* put_attr, HUD widgets (ATTR macro is in types.h) */
-#include "bgpat.h"         /* per-run / per-wave background shapes */
+#include "bgpat.h"         /* per-run background shapes */
+#include "fxtab.h"         /* fx_sin -- game-over plasma renderer */
+#include "plasma.h"        /* plasma_field/palette + PLA_* */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
 #include <string.h>       /* memset (game-over fills) */
@@ -372,17 +374,6 @@ static void put_text(u16 base, u8 col, u8 row, const char *s)
     }
 }
 
-/* Render the 6 BCD score digits left-to-right at (col,row) of BOTH bitmaps. */
-static void put_score_digits(u8 col, u8 row, const score_t *s)
-{
-    u8 i;
-    for (i = 0; i < 6u; i++) {
-        u8 ch = (u8)('0' + s->digits[i]);
-        put_char(SCLD_SCREEN_A, (u8)(col + i), row, ch);
-        put_char(SCLD_SCREEN_B, (u8)(col + i), row, ch);
-    }
-}
-
 /* HUD score at (col 1, row 23), redrawing ONLY the digits that changed since the
  * last call (cache) -- so a per-shot -5 doesn't repaint all six glyphs every
  * shot. Pass force=1 after a scld_clear wiped the score bitmap (init/respawn). */
@@ -398,32 +389,6 @@ static void hud_score(const score_t *s, u8 force)
             put_char(SCLD_SCREEN_B, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
         }
     }
-}
-
-/* Render a u8 (0..255) as up to 3 right-aligned decimal chars into BOTH bitmaps.
- * Only /10 and /100 on a small u8 — cheap, no runtime-value division. */
-static void put_u8(u8 col, u8 row, u8 v)
-{
-    u8 h = (u8)(v / 100u);
-    u8 t = (u8)((v / 10u) % 10u);
-    u8 o = (u8)(v % 10u);
-    if (h) {
-        put_char(SCLD_SCREEN_A, col, row, (u8)('0' + h));
-        put_char(SCLD_SCREEN_B, col, row, (u8)('0' + h));
-    }
-    if (h || t) {
-        put_char(SCLD_SCREEN_A, (u8)(col + 1), row, (u8)('0' + t));
-        put_char(SCLD_SCREEN_B, (u8)(col + 1), row, (u8)('0' + t));
-    }
-    put_char(SCLD_SCREEN_A, (u8)(col + 2), row, (u8)('0' + o));
-    put_char(SCLD_SCREEN_B, (u8)(col + 2), row, (u8)('0' + o));
-}
-
-/* put_text into BOTH bitmaps (so the page-flip's current page shows it). */
-static void put_text_both(u8 col, u8 row, const char *s)
-{
-    put_text(SCLD_SCREEN_A, col, row, s);
-    put_text(SCLD_SCREEN_B, col, row, s);
 }
 
 /* Dash readiness: a single dot on the top frame (col 15) -- bright GREEN when
@@ -443,43 +408,83 @@ static void hud_dash_dot(u8 dash_cd)
                                : ATTR(1, 3, 7)));     /* frame: charging  */
 }
 
+/* Game-over plasma: write the field into BOTH attribute planes so the same
+ * binary degrades automatically -- a Timex shows the 8x1 plane (smooth), a
+ * 128K/48K shows the 8x8 plane (chunky). A separable precompute keeps the
+ * 6144-cell fill affordable on the otherwise-idle game-over loop. */
+static void plasma_render(u8 phase)
+{
+    static s8 sinx[32];
+    static s8 siny[192];
+    static s8 sind[223];          /* x+y in 0..222 */
+    u8  x, y;
+    u16 s;
+    u8  ph2 = (u8)(phase + 64u);
+
+    for (x = 0; x < 32u; x++)  sinx[x] = fx_sin[(u8)(x * PLA_KX + phase)];
+    for (y = 0; y < 192u; y++) siny[y] = fx_sin[(u8)(y * PLA_KY + phase)];
+    for (s = 0; s < 223u; s++) sind[s] = fx_sin[(u8)((u8)s * PLA_KD + ph2)];
+
+    for (y = 0; y < 192u; y++) {
+        u8 *hc   = scld_scanline(0x6000u, (u8)y);   /* 8x1 attr row (Timex)     */
+        u8 *cell = ((u8)(y & 7u) == 0u)              /* 8x8 block row (fallback) */
+                   ? ((u8 *)SCLD_ATTRS_A + (u16)(y >> 3) * 32u) : (u8 *)0;
+        s8 sy = siny[y];
+        for (x = 0; x < 32u; x++) {
+            s16 v = (s16)sinx[x] + (s16)sy + (s16)sind[(u8)(x + (u8)y)];
+            u8  a = plasma_palette(v);
+            hc[x] = a;
+            if (cell) { cell[x] = a; }
+        }
+    }
+}
+
 /*
  * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
- * player died on, and waits for a choice:
+ * player died on over an animated plasma, and waits for a choice:
  *   FIRE / SPACE -> resume from the death wave  (returns 0)
  *   Q            -> fresh game from wave 1       (returns 1)
- * Drawn into BOTH bitmaps + both attribute blocks, so it reads regardless of
- * which page the last page-flip left visible (we don't flip while waiting).
- * Caller does the game_state reset + re-init.
+ * Text lives in the 0x4000 bitmap (screen A) only; the screen runs in Timex
+ * hi-color so 0x6000 is the 8x1 colour map (NOT a second bitmap). The plasma
+ * keeps ink=white so the text reads. Caller does the game_state reset + re-init.
  */
 static u8 game_over_screen(const game_state_t *g, u8 death_wave)
 {
+    u8 phase = 0u;
+    u8 i;
+
     game_over_flash();
 
+    /* Draw text into screen A ONLY (in hi-color, 0x6000 is colour, not pixels). */
     scld_clear(SCLD_SCREEN_A);
-    scld_clear(SCLD_SCREEN_B);
-    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
-    memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
+    put_text(SCLD_SCREEN_A, 11,  6, "GAME OVER");
+    put_text(SCLD_SCREEN_A,  7, 10, "SCORE");
+    for (i = 0; i < 6u; i++) {
+        put_char(SCLD_SCREEN_A, (u8)(13u + i), 10u, (u8)('0' + g->score.digits[i]));
+    }
+    put_text(SCLD_SCREEN_A,  7, 12, "WAVE");
+    put_char(SCLD_SCREEN_A, 13u, 12u, (u8)('0' + (death_wave / 10u) % 10u));
+    put_char(SCLD_SCREEN_A, 14u, 12u, (u8)('0' + (death_wave % 10u)));
+    put_text(SCLD_SCREEN_A,  3, 17, "FIRE/SPACE  RESUME WAVE");
+    put_char(SCLD_SCREEN_A, 27u, 17u, (u8)('0' + (death_wave / 10u) % 10u));
+    put_char(SCLD_SCREEN_A, 28u, 17u, (u8)('0' + (death_wave % 10u)));
+    put_text(SCLD_SCREEN_A,  3, 19, "Q           NEW GAME");
 
-    put_text_both(11,  6, "GAME OVER");
-    put_text_both( 7, 10, "SCORE");
-    put_score_digits(13, 10, &g->score);
-    put_text_both( 7, 12, "WAVE");
-    put_u8(13, 12, death_wave);
-    put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
-    put_u8(27, 17, death_wave);
-    put_text_both( 3, 19, "Q           NEW GAME");
+    scld_hicolor_on();
 
     for (;;) {
         intent_t in;
+        plasma_render(phase);
+        phase++;
         input_read(DIR_NONE, &in);    /* scheme-agnostic read */
-        /* CONTINUE on the FIRE button or SPACE. In the twin-stick schemes the
-         * FIRE button maps to BOOST (scheme A/C) or fire-in-heading (scheme B),
-         * so accept either intent here, plus SPACE directly. */
+        /* CONTINUE on the FIRE button or SPACE (FIRE maps to BOOST or
+         * fire-in-heading depending on scheme), plus SPACE directly. */
         if (in.boost || in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
+            scld_hicolor_off();
             return 0u;                 /* resume from the death wave, score 0 */
         }
         if (in_key_pressed(IN_KEY_SCANCODE_q)) {
+            scld_hicolor_off();
             return 1u;                 /* fresh game */
         }
         scld_wait();
