@@ -110,7 +110,9 @@ Five patterns, each a `static const` table of up to `MAX_ENEMIES` positions insi
 
 **Indexing:** `wave` is 1-based (§6); the table is `waves[16]` 0-based, so spawn reads `waves[(wave-1) clamped to 0..15]` with **wave>16 looping at index 15** and a guard for `wave==0`. The old hand-filled `SX[MAX_ENEMIES]`/`SY[MAX_ENEMIES]` (exactly 6 entries) are **removed** — the pattern tables replace them (bumping `MAX_ENEMIES` without removing them would zero-fill enemies at (0,0) inside the wall).
 
-**RNG-order contract (so existing seeded tests stay deterministic):** `enemies_spawn(es, wave)` consumes rng in a fixed order — (1) **one draw to pick the pattern**, rerolled if equal to `last_pattern` (a static), then (2) place `count` enemies (levels assigned by the wave table's mix, first-bounce-then-chase-then-hunter, *no* rng), then (3) two draws per bouncer for its `dx/dy` seed. `test_enemy.c` seed expectations are updated for this order.
+**Pattern selection (resolves the §5.1-vs-§5.4 ambiguity):** for **waves 1–16 the pattern is the wave table's `pattern` field** — the per-wave map you approved (Star at wave 5, Flanks at 6, …) is intentional and is *not* rng-picked. Only the **endless loop (wave>16)** picks a pattern with `rng_byte()`, rerolled while equal to `last_pattern`. `last_pattern` (a static) is set to whichever pattern was used (table or rng) so the >16 reroll avoids repeating the previous wave's pattern.
+
+**RNG-order contract (so seeded tests stay deterministic):** `enemies_spawn(es, wave)` consumes rng in a fixed order — (1) **wave>16 only:** draw(s) to pick the pattern (reroll while `== last_pattern`); waves 1–16 draw nothing here (pattern comes from the table). (2) place `count` positions from the chosen pattern table — levels from the wave row, first-bounce-then-chase-then-hunter, *no* rng. (3) **two `rng_byte()` per BOUNCER** (not per slot — chasers/hunters ignore `dx/dy`, so no draws for them) for its `dx/dy` seed. `test_enemy.c` seed expectations match this order.
 
 ### 5.2 `MAX_ENEMIES` and the performance gate
 
