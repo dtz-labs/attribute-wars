@@ -28,7 +28,17 @@ u8 boxes_overlap(u8 ax, u8 ay, u8 bx, u8 by)
 bullets_t *cbe_bs;
 enemies_t *cbe_es;
 u8         cbe_kills;
+u8         cbe_kill_mask;
 extern void collide_asm(void);
+
+u8 collide_bullets_enemies_mask(bullets_t *bs, enemies_t *es, u8 *kill_mask)
+{
+    cbe_bs = bs;
+    cbe_es = es;
+    collide_asm();
+    *kill_mask = cbe_kill_mask;
+    return cbe_kills;
+}
 
 u8 collide_bullets_enemies(bullets_t *bs, enemies_t *es)
 {
@@ -38,9 +48,11 @@ u8 collide_bullets_enemies(bullets_t *bs, enemies_t *es)
     return cbe_kills;
 }
 #else
-u8 collide_bullets_enemies(bullets_t *bs, enemies_t *es)
+u8 collide_bullets_enemies_mask(bullets_t *bs, enemies_t *es, u8 *kill_mask)
 {
     u8 kills = 0;
+    u8 mask = 0;
+    u8 bit = 1;
     u8 i, j;
     bullet_t *b = bs->b;
 
@@ -53,23 +65,39 @@ u8 collide_bullets_enemies(bullets_t *bs, enemies_t *es)
         bx = b->x;
         by = b->y;                  /* cache: no repeated pointer derefs */
         e = es->e;
+        bit = 1;
         for (j = 0; j < MAX_ENEMIES; j++, e++) {
             u8 dx, dy;
             if (!e->alive) {
+                bit = (u8)(bit << 1);
                 continue;
             }
             /* inline boxes_overlap (no call) + short-circuit on x first */
             dx = (u8)(bx > e->x ? bx - e->x : e->x - bx);
-            if (dx >= SPR_SIZE) continue;
+            if (dx >= SPR_SIZE) {
+                bit = (u8)(bit << 1);
+                continue;
+            }
             dy = (u8)(by > e->y ? by - e->y : e->y - by);
-            if (dy >= SPR_SIZE) continue;
+            if (dy >= SPR_SIZE) {
+                bit = (u8)(bit << 1);
+                continue;
+            }
             e->alive = 0;           /* enemy destroyed */
             b->active = 0;          /* bullet consumed */
             kills++;
+            mask = (u8)(mask | bit);
             break;                  /* this bullet is spent */
         }
     }
+    *kill_mask = mask;
     return kills;
+}
+
+u8 collide_bullets_enemies(bullets_t *bs, enemies_t *es)
+{
+    u8 kill_mask;
+    return collide_bullets_enemies_mask(bs, es, &kill_mask);
 }
 #endif /* __SDCC */
 

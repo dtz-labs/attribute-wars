@@ -29,7 +29,7 @@ int main(void)
     {
         bullets_t bs;
         enemies_t es;
-        u8 i, kills;
+        u8 i, kills, mask;
 
         for (i = 0; i < MAX_BULLETS; i++) bs.b[i].active = 0;
         for (i = 0; i < MAX_ENEMIES; i++) es.e[i].alive = 0;
@@ -47,6 +47,11 @@ int main(void)
         check("enemy1 survives",     es.e[1].alive == 1);
         check("hitting bullet gone", bs.b[0].active == 0);
         check("missing bullet stays",bs.b[1].active == 1);
+
+        bs.b[0].x = 92; bs.b[0].y = 91; bs.b[0].active = 1;  /* overlaps e1 */
+        kills = collide_bullets_enemies_mask(&bs, &es, &mask);
+        check("mask kill reported", kills == 1);
+        check("mask marks enemy1",  mask == 0x02u);
     }
 
     /* One bullet cannot kill two enemies (break after first hit). */
