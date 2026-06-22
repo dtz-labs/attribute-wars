@@ -2,8 +2,7 @@
  * enemy.h -- enemies with behaviour "levels" (Geometry-Wars-style types).
  * Pure logic (host-tested with a seeded RNG); drawing via sprite.h.
  *
- * Levels can be MIXED within a wave; the mix escalates as the player racks up
- * kills.
+ * Levels are MIXED within a wave; the mix is driven by the 16-wave table.
  */
 #ifndef ENEMY_H
 #define ENEMY_H
@@ -19,9 +18,21 @@
 #define ENEMY_CHASE  2       /* steers toward the player                        */
 #define ENEMY_HUNTER 3       /* chases the player AND dodges nearby bullets     */
 
-/* Kill thresholds at which tougher types start mixing into new waves. */
-#define WAVE_CHASE_AT  20u
-#define WAVE_HUNTER_AT 40u
+/* Spawn patterns — RNG-picked each wave (no immediate repeat). */
+enum { PAT_PERIMETER, PAT_STAR, PAT_FLANKS, PAT_ROWS, PAT_DIAGONALS, PAT_N };
+
+/* Per-wave difficulty descriptor. count is clamped to MAX_ENEMIES at use. */
+#define WAVE_COUNT 16
+typedef struct {
+    u8  count;         /* total enemies (clamped to MAX_ENEMIES at spawn)   */
+    u8  n_bounce;      /* how many get ENEMY_BOUNCE level                   */
+    u8  n_chase;       /* how many get ENEMY_CHASE level                    */
+    u8  n_hunter;      /* how many get ENEMY_HUNTER level                   */
+    u8  pattern;       /* preferred spawn pattern (PAT_* — overridden by rng)*/
+    u16 time_frames;   /* wave time budget in frames (seconds × 50)         */
+} wave_t;
+
+extern const wave_t wave_table[WAVE_COUNT];   /* §5.4 of the spec, verbatim */
 
 typedef struct {
     u8 x, y;      /* top-left pixel position           */
@@ -34,11 +45,13 @@ typedef struct {
     enemy_t e[MAX_ENEMIES];
 } enemies_t;
 
-/* Spawn a fresh wave. The level mix depends on total_kills:
- *   < WAVE_CHASE_AT : all bounce
- *   < WAVE_HUNTER_AT: bounce + chase
- *   else            : bounce + chase + hunter */
-void enemies_spawn(enemies_t *es, u16 total_kills);
+/* Spawn a fresh wave.
+ * wave is 1-based; >16 loops at wave-16 settings with a random pattern.
+ * wave==0 is treated as wave 1. */
+void enemies_spawn(enemies_t *es, u8 wave);
+
+/* Returns the pattern used in the last enemies_spawn call (for tests). */
+u8 enemy_last_pattern(void);
 
 /* Non-zero if at least one enemy is alive (else the wave is cleared). */
 u8 enemies_any_alive(const enemies_t *es);

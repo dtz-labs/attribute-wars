@@ -22,41 +22,184 @@
  * per enemy -- the call overhead was a big chunk of the logic frame. */
 #define SGN_U8(a, b) ((s8)((a) > (b) ? 1 : ((a) < (b) ? -1 : 0)))
 
-static u8 pick_level(u16 kills)
+/* ---- 16-wave difficulty table (spec §5.4) --------------------------------- */
+
+const wave_t wave_table[WAVE_COUNT] = {
+    /* wave  count  B  C  H  pattern        time_frames */
+    /* 1  */ { 4u, 4u, 0u, 0u, PAT_PERIMETER, 1500u },
+    /* 2  */ { 5u, 5u, 0u, 0u, PAT_ROWS,      1500u },
+    /* 3  */ { 6u, 6u, 0u, 0u, PAT_FLANKS,    1500u },
+    /* 4  */ { 5u, 4u, 1u, 0u, PAT_ROWS,      1500u },
+    /* 5  */ { 6u, 4u, 2u, 0u, PAT_STAR,      1500u },
+    /* 6  */ { 6u, 3u, 3u, 0u, PAT_FLANKS,    1500u },
+    /* 7  */ { 7u, 3u, 4u, 0u, PAT_DIAGONALS, 1500u },
+    /* 8  */ { 6u, 2u, 2u, 2u, PAT_PERIMETER, 1500u },
+    /* 9  */ { 7u, 2u, 3u, 2u, PAT_STAR,      1250u },
+    /* 10 */ { 7u, 1u, 3u, 3u, PAT_FLANKS,    1250u },
+    /* 11 */ { 8u, 2u, 3u, 3u, PAT_DIAGONALS, 1250u },
+    /* 12 */ { 8u, 1u, 3u, 4u, PAT_STAR,      1250u },
+    /* 13 */ { 8u, 0u, 4u, 4u, PAT_FLANKS,    1000u },
+    /* 14 */ { 8u, 0u, 3u, 5u, PAT_ROWS,      1000u },
+    /* 15 */ { 8u, 0u, 2u, 6u, PAT_DIAGONALS, 1000u },
+    /* 16 */ { 8u, 0u, 1u, 7u, PAT_STAR,      1000u },
+};
+
+/* ---- 5 spawn position tables (spec §5.1) ---------------------------------- */
+/* All coordinates inside [ARENA_L..ARENA_R] x [ARENA_T..ARENA_B] = 8..240 x 8..176 */
+
+/* PERIMETER: corners + edge midpoints (up to 8 positions). */
+static const u8 POS_PERIMETER_X[] = {
+    (u8)(ARENA_L + 8u),  /* top-left corner area   */
+    (u8)(ARENA_R - 8u),  /* top-right corner area  */
+    (u8)(ARENA_L + 8u),  /* bottom-left corner area*/
+    (u8)(ARENA_R - 8u),  /* bottom-right corner area*/
+    124u,                /* top edge midpoint      */
+    124u,                /* bottom edge midpoint   */
+    (u8)(ARENA_L + 8u),  /* left edge midpoint     */
+    (u8)(ARENA_R - 8u),  /* right edge midpoint    */
+};
+static const u8 POS_PERIMETER_Y[] = {
+    (u8)(ARENA_T + 8u),
+    (u8)(ARENA_T + 8u),
+    (u8)(ARENA_B - 8u),
+    (u8)(ARENA_B - 8u),
+    (u8)(ARENA_T + 8u),
+    (u8)(ARENA_B - 8u),
+    92u,                 /* left wall vertical centre  */
+    92u,                 /* right wall vertical centre */
+};
+
+/* STAR: tight central ring around arena centre (~124, 92). */
+static const u8 POS_STAR_X[] = {
+    124u, 108u, 140u, 108u, 140u, 124u, 96u, 152u,
+};
+static const u8 POS_STAR_Y[] = {
+    76u,  84u,  84u,  100u, 100u, 108u, 92u, 92u,
+};
+
+/* FLANKS: two vertical columns near left and right walls. */
+static const u8 POS_FLANKS_X[] = {
+    (u8)(ARENA_L + 16u), (u8)(ARENA_L + 16u), (u8)(ARENA_L + 16u), (u8)(ARENA_L + 16u),
+    (u8)(ARENA_R - 16u), (u8)(ARENA_R - 16u), (u8)(ARENA_R - 16u), (u8)(ARENA_R - 16u),
+};
+static const u8 POS_FLANKS_Y[] = {
+    (u8)(ARENA_T + 16u), 68u, 108u, (u8)(ARENA_B - 16u),
+    (u8)(ARENA_T + 16u), 68u, 108u, (u8)(ARENA_B - 16u),
+};
+
+/* ROWS: horizontal lines top and bottom. */
+static const u8 POS_ROWS_X[] = {
+    (u8)(ARENA_L + 16u), 76u, 124u, 172u, (u8)(ARENA_R - 16u),
+    (u8)(ARENA_L + 16u), 76u, 124u,
+};
+static const u8 POS_ROWS_Y[] = {
+    (u8)(ARENA_T + 16u), (u8)(ARENA_T + 16u), (u8)(ARENA_T + 16u),
+    (u8)(ARENA_T + 16u), (u8)(ARENA_T + 16u),
+    (u8)(ARENA_B - 16u), (u8)(ARENA_B - 16u), (u8)(ARENA_B - 16u),
+};
+
+/* DIAGONALS: an "X" pattern across the arena. */
+static const u8 POS_DIAGONALS_X[] = {
+    (u8)(ARENA_L + 16u), (u8)(ARENA_L + 56u), 124u, (u8)(ARENA_R - 56u), (u8)(ARENA_R - 16u),
+    (u8)(ARENA_L + 16u), (u8)(ARENA_L + 56u), 124u,
+};
+static const u8 POS_DIAGONALS_Y[] = {
+    (u8)(ARENA_T + 16u), 52u, 92u, 52u, (u8)(ARENA_T + 16u),
+    (u8)(ARENA_B - 16u), 132u, 92u,
+};
+
+/* Pattern table: indexed by PAT_* enum. */
+static const u8 * const PAT_X[PAT_N] = {
+    POS_PERIMETER_X, POS_STAR_X, POS_FLANKS_X, POS_ROWS_X, POS_DIAGONALS_X,
+};
+static const u8 * const PAT_Y[PAT_N] = {
+    POS_PERIMETER_Y, POS_STAR_Y, POS_FLANKS_Y, POS_ROWS_Y, POS_DIAGONALS_Y,
+};
+
+/* ---- spawn state ---------------------------------------------------------- */
+
+static u8 s_last_pattern = (u8)PAT_N;   /* sentinel: no pattern used yet */
+
+u8 enemy_last_pattern(void)
 {
-    if (kills < WAVE_CHASE_AT) {
-        return ENEMY_BOUNCE;
-    }
-    if (kills < WAVE_HUNTER_AT) {
-        return (u8)((rng_byte() & 1u) ? ENEMY_CHASE : ENEMY_BOUNCE);
-    }
-    {
-        u8 r = (u8)(rng_byte() & 3u);   /* 0/3 -> bounce, 1 -> chase, 2 -> hunter */
-        if (r == 1u) return ENEMY_CHASE;
-        if (r == 2u) return ENEMY_HUNTER;
-        return ENEMY_BOUNCE;
-    }
+    return s_last_pattern;
 }
 
-void enemies_spawn(enemies_t *es, u16 total_kills)
+/* ---- enemies_spawn -------------------------------------------------------- */
+
+void enemies_spawn(enemies_t *es, u8 wave)
 {
-    /* Spread around the arena: 4 corners + top & bottom edge midpoints. */
-    static const u8 SX[MAX_ENEMIES] = {
-        (u8)(ARENA_L + 16), (u8)(ARENA_R - 16), (u8)(ARENA_L + 16), (u8)(ARENA_R - 16),
-        124,                124
-    };
-    static const u8 SY[MAX_ENEMIES] = {
-        (u8)(ARENA_T + 16), (u8)(ARENA_T + 16), (u8)(ARENA_B - 16), (u8)(ARENA_B - 16),
-        (u8)(ARENA_T + 16), (u8)(ARENA_B - 16)
-    };
-    enemy_t *e = es->e;
+    const wave_t *w;
+    u8 pat;
+    u8 count, nb, nc, nh;
     u8 i;
-    for (i = 0; i < MAX_ENEMIES; i++, e++) {
-        e->x = SX[i];
-        e->y = SY[i];
-        e->alive = 1;
-        e->level = pick_level(total_kills);
-        e->dx = (rng_byte() & 1u) ? (s8)1 : (s8)-1;   /* diagonal seed (bounce) */
+    enemy_t *e;
+    const u8 *px, *py;
+
+    /* Index clamped to [0..15]; wave==0 → index 0 (wave 1); wave>16 → index 15 */
+    {
+        u8 idx;
+        if (wave == 0u || wave == 1u) {
+            idx = 0u;
+        } else if (wave >= 16u) {
+            idx = 15u;
+        } else {
+            idx = (u8)(wave - 1u);
+        }
+        w = &wave_table[idx];
+    }
+
+    /* Clamp count to MAX_ENEMIES. */
+    count = w->count;
+    if (count > MAX_ENEMIES) {
+        count = MAX_ENEMIES;
+    }
+
+    /* (1) Pick pattern via RNG, reroll while equal to last_pattern. */
+    pat = (u8)(rng_byte() % (u8)PAT_N);
+    while (pat == s_last_pattern) {
+        pat = (u8)(rng_byte() % (u8)PAT_N);
+    }
+    s_last_pattern = pat;
+
+    /* (2) Assign positions and levels.
+     *     Level order: first n_bounce bouncers, then n_chase chasers,
+     *     then n_hunter hunters (no rng for levels). */
+    px = PAT_X[pat];
+    py = PAT_Y[pat];
+
+    /* Compute clamped mix counts (proportional when total > MAX_ENEMIES). */
+    nb = w->n_bounce;
+    nc = w->n_chase;
+    nh = w->n_hunter;
+    /* Simple clamp: drop from hunters first, then chasers, then bouncers. */
+    while ((u8)(nb + nc + nh) > count) {
+        if (nh > 0u) { nh--; }
+        else if (nc > 0u) { nc--; }
+        else if (nb > 0u) { nb--; }
+    }
+
+    e = es->e;
+    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
+        if (i < count) {
+            e->x = px[i];
+            e->y = py[i];
+            e->alive = 1u;
+            /* Assign level: first nb bounce, then nc chase, then nh hunter. */
+            if (i < nb) {
+                e->level = ENEMY_BOUNCE;
+            } else if (i < (u8)(nb + nc)) {
+                e->level = ENEMY_CHASE;
+            } else {
+                e->level = ENEMY_HUNTER;
+            }
+        } else {
+            e->alive = 0u;
+        }
+        /* (3) Two rng_byte() per slot for dx/dy seed (always, preserving rng
+         *     sequence length regardless of alive state). Only meaningful for
+         *     bouncers, but we consume them unconditionally for determinism. */
+        e->dx = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
         e->dy = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
     }
 }
