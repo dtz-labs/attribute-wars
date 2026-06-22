@@ -1,0 +1,50 @@
+/*
+ * sprites.c -- 8x8 sprite bitmaps. Each row is one byte, bit 7 = leftmost pixel.
+ */
+#include "sprites.h"
+
+/* Player ship -- an upward arrowhead.
+ *      ...XX...   0x18
+ *      ..XXXX..   0x3C
+ *      .XXXXXX.   0x7E
+ *      XXXXXXXX   0xFF
+ *      XXXXXXXX   0xFF
+ *      XX.XX.XX   0xDB
+ *      X......X   0x81
+ *      ........   0x00
+ */
+const u8 spr_ship[8] = { 0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0xDB, 0x81, 0x00 };
+
+/* Directional ship, pointing along each DIR_* (N,NE,E,SE,S,SW,W,NW), index by
+ * player.facing.
+ *   - N/S : the source fighter -- nose + swept wings + twin engine dots.
+ *   - E   : N rotated 90 deg CW  (nose right).  W : N rotated 90 deg CCW (left).
+ *           The SAME craft turned, so left/right match up/down exactly.
+ *   - diagonals: NE was hand-drawn; SE/SW/NW are NE mirrored into each corner
+ *           (vert flip / 180 / horiz flip), so all four are consistent. */
+const u8 spr_ship_dir[8][8] = {
+    { 0x18,0x18,0x3C,0x7E,0xFF,0xDB,0x99,0x42 },  /* N  : nose up             */
+    { 0x03,0x7F,0xFE,0x9E,0x3E,0x16,0x06,0x1C },  /* NE : hand-drawn          */
+    { 0x70,0xB8,0x1C,0x7F,0x7F,0x1C,0xB8,0x70 },  /* E  : N rotated CW (right)*/
+    { 0x1C,0x06,0x16,0x3E,0x9E,0xFE,0x7F,0x03 },  /* SE : NE flipped vert     */
+    { 0x42,0x99,0xDB,0xFF,0x7E,0x3C,0x18,0x18 },  /* S  : nose down           */
+    { 0x38,0x60,0x68,0x7C,0x79,0x7F,0xFE,0xC0 },  /* SW : NE rotated 180      */
+    { 0x0E,0x1D,0x38,0xFE,0xFE,0x38,0x1D,0x0E },  /* W  : N rotated CCW (left)*/
+    { 0xC0,0xFE,0x7F,0x79,0x7C,0x68,0x60,0x38 },  /* NW : NE flipped horiz    */
+};
+
+/* Small HEART for the lives HUD -- deliberately < 8x8 so it reads as UI, not as
+ * a game sprite (sits padded in its cell). */
+const u8 spr_heart[8] = { 0x00, 0x6C, 0xFE, 0xFE, 0x7C, 0x38, 0x10, 0x00 };
+
+/* Bouncer (level 0) -- a legged alien (drifts & bounces). */
+const u8 spr_enemy[8] = { 0x3C, 0x7E, 0xDB, 0xFF, 0xBD, 0xA5, 0x42, 0x24 };
+
+/* Chaser (level 2) -- a flying saucer, comes straight at you. */
+const u8 spr_enemy_chase[8] = { 0x3C, 0x7E, 0xFF, 0xDB, 0x7E, 0x00, 0x24, 0x42 };
+
+/* Hunter (level 3) -- a spiky alien, chases and dodges. */
+const u8 spr_enemy_hunter[8] = { 0x18, 0x5A, 0x3C, 0xFF, 0xFF, 0x3C, 0x5A, 0x18 };
+
+/* Bullet -- a small centred dot. */
+const u8 spr_bullet[8] = { 0x00, 0x00, 0x18, 0x3C, 0x3C, 0x18, 0x00, 0x00 };

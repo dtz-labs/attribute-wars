@@ -24,4 +24,18 @@ $CC $CFLAGS "$ROOT/test/test_player.c" "$ROOT/src/player.c" "$ROOT/src/geometry.
 $CC $CFLAGS "$ROOT/test/test_bullet.c" "$ROOT/src/bullet.c" -o "$OUT/test_bullet"
 "$OUT/test_bullet"
 
+# scld_scanline is a pure inline in the header (the hardware lives in scld.c,
+# which is target-only), so this test needs no .c source linked.
+$CC $CFLAGS "$ROOT/test/test_scld.c" -o "$OUT/test_scld"
+"$OUT/test_scld"
+
+$CC $CFLAGS "$ROOT/test/test_collision.c" "$ROOT/src/collision.c" -o "$OUT/test_collision"
+"$OUT/test_collision"
+
+$CC $CFLAGS "$ROOT/test/test_rng.c" "$ROOT/src/rng.c" -o "$OUT/test_rng"
+"$OUT/test_rng"
+
+$CC $CFLAGS "$ROOT/test/test_enemy.c" "$ROOT/src/enemy.c" "$ROOT/src/rng.c" -o "$OUT/test_enemy"
+"$OUT/test_enemy"
+
 echo "ALL HOST TESTS PASSED"

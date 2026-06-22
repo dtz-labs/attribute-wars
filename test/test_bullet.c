@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include "bullet.h"
+#include "arena.h"
 
 static int checks = 0;
 #define CHECK(cond) do { assert(cond); ++checks; } while (0)
@@ -62,16 +63,17 @@ static void test_update_moves_and_despawns(void)
     bullets_update(&bs);
     CHECK(bs.b[i].x == 100 + BULLET_SPEED && bs.b[i].y == 80);
 
-    /* Near the right edge: despawns when it would leave the screen. */
+    /* Despawns at the arena WALL, not the screen edge: x past ARENA_R but still
+     * on-screen must still die (so it never paints over the magenta border). */
     bullets_init(&bs);
-    i = bullet_spawn(&bs, 254, 80, 1, 0);   /* 254 + 4 = 258 > 255 */
+    i = bullet_spawn(&bs, (u8)(ARENA_R - 2), 80, 1, 0);  /* +4 -> past ARENA_R */
     CHECK(bullets_count(&bs) == 1);
     bullets_update(&bs);
-    CHECK(bullets_count(&bs) == 0);         /* gone, not wrapped */
+    CHECK(bullets_count(&bs) == 0);         /* hit the wall, gone */
 
-    /* Off the top despawns too. */
+    /* Off the top wall despawns too. */
     bullets_init(&bs);
-    i = bullet_spawn(&bs, 80, 2, 0, -1);    /* 2 - 4 = -2 < 0 */
+    i = bullet_spawn(&bs, 80, (u8)(ARENA_T + 1), 0, -1);  /* steps above ARENA_T */
     bullets_update(&bs);
     CHECK(bullets_count(&bs) == 0);
     (void)i;

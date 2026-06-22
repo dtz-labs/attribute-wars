@@ -1,11 +1,12 @@
 /*
- * test_player.c -- host unit tests for player movement/facing (pure logic).
+ * test_player.c -- host unit tests for inertial player movement (pure logic).
  */
 #include <assert.h>
 #include <stdio.h>
 #include "player.h"
 #include "geometry.h"
 #include "controls.h"
+#include "arena.h"
 
 static int checks = 0;
 #define CHECK(cond) do { assert(cond); ++checks; } while (0)
@@ -25,60 +26,82 @@ static void test_init(void)
     player_init(&p, 100, 80);
     CHECK(p.x == 100 && p.y == 80);
     CHECK(p.facing == DIR_NONE);
+    CHECK(p.vx == 0 && p.vy == 0);
 }
 
-static void test_move_axes(void)
+static void test_accel_and_coast(void)
 {
     player_t p;
     intent_t in;
+    u8 k, x0;
 
     player_init(&p, 100, 80);
+
+    /* Hold right: velocity ramps up, ship moves right and faces East. */
     in = mv(1, 0);
-    player_update(&p, &in);
-    CHECK(p.x == 100 + PLAYER_SPEED && p.y == 80);
+    for (k = 0; k < 12; k++) player_update(&p, &in);
+    CHECK(p.x > 100);
+    CHECK(p.vx > 0);
     CHECK(p.facing == DIR_E);
+    x0 = p.x;
 
-    in = mv(0, -1);            /* up = -y */
-    player_update(&p, &in);
-    CHECK(p.y == 80 - PLAYER_SPEED);
-    CHECK(p.facing == DIR_N);
-
-    /* Idle keeps facing, position unchanged. */
+    /* Release: it keeps drifting (inertia), then brakes to a stop. */
     in = mv(0, 0);
     player_update(&p, &in);
-    CHECK(p.facing == DIR_N);
-    CHECK(p.x == 100 + PLAYER_SPEED && p.y == 80 - PLAYER_SPEED);
+    CHECK(p.x >= x0);                 /* still coasting */
+    for (k = 0; k < 30; k++) player_update(&p, &in);  /* longer drift now (~22 frames) */
+    CHECK(p.vx == 0 && p.vy == 0);    /* came to rest */
+    CHECK(p.facing == DIR_E);         /* keeps last facing while idle */
 }
 
-static void test_wrap(void)
+static void test_walls(void)
 {
     player_t p;
     intent_t in;
+    u8 k;
 
-    /* Walk off the left edge -> wraps to the right (x is u8). */
-    player_init(&p, 1, 50);
-    in = mv(-1, 0);
-    player_update(&p, &in);                 /* 1 - 2 = -1 -> 255 */
-    CHECK(p.x == 255);
+    /* Drive into the right wall -> clamps at ARENA_R, velocity killed. */
+    player_init(&p, (u8)(ARENA_R - 4), 80);
+    in = mv(1, 0);
+    for (k = 0; k < 30; k++) player_update(&p, &in);
+    CHECK(p.x == ARENA_R);
+    CHECK(p.vx == 0);
 
-    /* Walk off the top -> wraps to the bottom (y mod 192). */
-    player_init(&p, 50, 1);
+    /* Top wall too. */
+    player_init(&p, 80, (u8)(ARENA_T + 4));
     in = mv(0, -1);
-    player_update(&p, &in);                 /* 1 - 2 = -1 -> 191 */
-    CHECK(p.y == 191);
+    for (k = 0; k < 30; k++) player_update(&p, &in);
+    CHECK(p.y == ARENA_T);
+}
 
-    /* Walk off the bottom -> wraps to the top. */
-    player_init(&p, 50, 190);
-    in = mv(0, 1);
-    player_update(&p, &in);                 /* 190 + 2 = 192 -> 0 */
-    CHECK(p.y == 0);
+static void test_diagonal_drift(void)
+{
+    player_t p;
+    intent_t in;
+    u8 k, x0, y0;
+
+    player_init(&p, 100, 80);
+    /* Hold down-right: both axes ramp up. */
+    in = mv(1, 1);
+    for (k = 0; k < 12; k++) player_update(&p, &in);
+    CHECK(p.x > 100 && p.y > 80);
+    CHECK(p.facing == DIR_SE);
+    x0 = p.x; y0 = p.y;
+
+    /* Release: BOTH axes keep drifting, then both stop. */
+    in = mv(0, 0);
+    player_update(&p, &in);
+    CHECK(p.x >= x0 && p.y >= y0);          /* both still coasting */
+    for (k = 0; k < 30; k++) player_update(&p, &in);
+    CHECK(p.vx == 0 && p.vy == 0);
 }
 
 int main(void)
 {
     test_init();
-    test_move_axes();
-    test_wrap();
+    test_accel_and_coast();
+    test_diagonal_drift();
+    test_walls();
     printf("player: %d checks passed\n", checks);
     return 0;
 }

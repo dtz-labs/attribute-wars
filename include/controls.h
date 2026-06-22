@@ -48,6 +48,18 @@ typedef struct {
     u8  fire;               /* non-zero if a shot is requested this frame    */
 } intent_t;
 
+/*
+ * Control schemes, chosen on the title screen. The hardware read (input_read)
+ * maps each to a different pair of input sources; the resulting intent_t is
+ * identical so the game loop is scheme-agnostic.
+ */
+#define CTRL_KEMPSTON_MOVE 0u  /* Kempston (+cursor) moves, QWEADZXC aims/fires */
+#define CTRL_KEMPSTON_FIRE 1u  /* QWEADZXC moves, Kempston button fires (facing)*/
+#define CTRL_DUAL_STICK    2u  /* TS2068 built-in joysticks (left move/right aim)*/
+
+/* Select the active control scheme (CTRL_*). Persists until changed. */
+void input_set_scheme(u8 scheme);
+
 /* ---- pure decode (host-tested) ---- */
 
 /* Decode normalised joystick byte into a -1/0/+1 movement step. */
@@ -56,6 +68,11 @@ void decode_move(u8 joy, s8 *dx, s8 *dy);
 /* Map a QWEADZXC key bitmask to a DIR_* (DIR_NONE if no aim key held).
  * If several keys are held, the lowest bit (scan order Q,W,E,A,D,Z,X,C) wins. */
 u8 decode_aim_keys(u8 keys);
+
+/* Map a QWEADZXC key bitmask to a -1/0/+1 movement step (the CTRL_KEMPSTON_FIRE
+ * scheme drives MOVEMENT from the keys). Diagonals come for free from the 8-way
+ * key grid. No key held -> (0,0). */
+void decode_move_keys(u8 keys, s8 *dx, s8 *dy);
 
 /* Update facing: keep the last non-zero movement direction when idle.
  * prev_facing is a DIR_* (or DIR_NONE before first move). */
@@ -66,6 +83,13 @@ u8 update_facing(u8 prev_facing, s8 move_dx, s8 move_dy);
  * with an absolute 8-way aim. Uses an out-param (not struct return) because
  * SDCC's z80 codegen is unreliable returning structs by value. */
 void make_intent(u8 joy, u8 keys, u8 facing, intent_t *out);
+
+/* Reject a *floating* Kempston read. A real stick can never hold two opposing
+ * directions; a port with no Kempston interface present floats to all-bits-set
+ * (UP+DOWN+LEFT+RIGHT+FIRE). Such a reading must be dropped, or it both jams
+ * movement (opposing axes cancel) and masks any cursor-key input OR-ed in.
+ * Returns the joystick byte unchanged, or 0 if it looks like a floating bus. */
+u8 joy_sanitize(u8 joy);
 
 /* ---- target-only hardware read (defined under __SPECTRUM in input.c) ---- */
 void input_read(u8 facing, intent_t *out);

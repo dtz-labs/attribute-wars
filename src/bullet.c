@@ -3,6 +3,7 @@
  * elsewhere (render.c, target). See bullet.h.
  */
 #include "bullet.h"
+#include "arena.h"
 
 void bullets_init(bullets_t *bs)
 {
@@ -44,18 +45,24 @@ int bullet_spawn(bullets_t *bs, u8 x, u8 y, s8 aim_dx, s8 aim_dy)
 
 void bullets_update(bullets_t *bs)
 {
+    bullet_t *b = bs->b;     /* pointer-step the pool (no arr[i] multiply) */
     u8 i;
-    for (i = 0; i < MAX_BULLETS; ++i) {
-        if (bs->b[i].active) {
-            /* Widen so an out-of-range step is detected before it wraps. */
-            s16 nx = (s16)bs->b[i].x + bs->b[i].dx;
-            s16 ny = (s16)bs->b[i].y + bs->b[i].dy;
-            if (nx < 0 || nx > 255 || ny < 0 || ny >= (s16)SCREEN_H) {
-                bs->b[i].active = 0;        /* left the screen -> despawn */
-            } else {
-                bs->b[i].x = (u8)nx;
-                bs->b[i].y = (u8)ny;
-            }
+    for (i = 0; i < MAX_BULLETS; ++i, ++b) {
+        s16 nx, ny;
+        if (!b->active) {
+            continue;
+        }
+        /* Widen so an out-of-range step is detected before it wraps. */
+        nx = (s16)b->x + b->dx;
+        ny = (s16)b->y + b->dy;
+        /* Despawn at the ARENA WALL, not the screen edge -- keeps shots off the
+         * magenta border frame (and the HUD in the top border row). */
+        if (nx < (s16)ARENA_L || nx > (s16)ARENA_R ||
+            ny < (s16)ARENA_T || ny > (s16)ARENA_B) {
+            b->active = 0;          /* hit the wall -> despawn */
+        } else {
+            b->x = (u8)nx;
+            b->y = (u8)ny;
         }
     }
 }

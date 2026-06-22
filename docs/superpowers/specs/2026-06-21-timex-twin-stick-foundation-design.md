@@ -23,10 +23,10 @@ Non-goals for this slice: colour, collision, scoring, waves, sound, enemy AI, me
 |---|----------|-----------|
 | D1 | **Standard 256×192 video mode, run monochrome** (all attributes set once to white-on-black, never touched again). | Pixel-plot cost is the same in every Spectrum/Timex mode; colour is not the priority. Uniform attributes ⇒ colour clash *cannot occur* and ⇒ zero per-frame attribute work. Clean white-on-black "vector" look. |
 | D2 | **Timex hardware double buffering** via SCLD page-flip (`OUT (0xFF)`): screen A at `0x4000`, screen B at `0x6000`. | The TC2048 has two full display files and can flip which is shown. This is the one feature a stock 48K Spectrum *cannot* do, and it is the single biggest contributor to "smooth" (flicker-free, tear-free). Hi-colour and hi-res modes are rejected precisely because they consume both pages for one image and so forbid page-flip double buffering. |
-| D3 | **Hybrid drawing:** enemies/bullets/particles = pre-rendered sprites or pixels; **player ship = live vector shape**. | True runtime vector line-drawing for *many* objects is too expensive on a 3.5 MHz Z80. Pre-rendered blits are cheap and plentiful; a single live-vector ship is trivially affordable and gives the player real "feel" (ship rotates to face aim). |
+| D3 | ~~**Hybrid drawing:** enemies/bullets/particles = pre-rendered sprites or pixels; **player ship = live vector shape**.~~ **✏ REVISED at M1 (§15): EVERYTHING is an 8×8 sprite, including the player. Line/vector drawing deferred.** | True runtime vector line-drawing for *many* objects is too expensive on a 3.5 MHz Z80 — and at M1 we confirmed even *one* vector ship is not worth the line primitive's cost/complexity yet. All-sprites is simpler and uniform. Directional ship = 8 sprite frames (data only). Lines revisited only with a concrete need + measurement (§15). |
 | D4 | **Concrete Timex control scheme** (see §6) replaces the prompt's abstract Mode A/B/C for now. | The user specified the exact Timex scheme: Kempston move + Kempston-fire-in-facing + QWEADZXC 8-direction fire. Sinclair modes deferred behind the same `intent_t` abstraction. |
 | D5 | **Pac-Man-style toroidal wrap** on both axes (no solid arena border). | User requirement. Objects near an edge are drawn twice (`pos` and `pos ± screen size`) with line/sprite clipping for the seamless look. |
-| D6 | **Full-clear-and-redraw-all** per back buffer each frame (not dirty-rectangles) — for this slice only. | With few objects plus statics (wall, stationary enemies) plus wrap-duplicates, dirty-rect bookkeeping is error-prone (a moving object's erase would punch holes in statics). Full clear + redraw is the *simplest correct* solution and fits the frame budget at this object count. Dirty-rect optimisation is deferred to the spec that introduces the large enemy swarm. |
+| D6 | ~~**Full-clear-and-redraw-all** per back buffer each frame (not dirty-rectangles).~~ **✏ REVISED at M1 (§15): INCREMENTAL erase+redraw (per-buffer dirty list). Full clear is too slow.** | Measured: a full memset clear of one 6144-byte buffer = **129,034 T = 1.85 frames** — it alone busts the 50 Hz budget. So we erase only what moved and redraw the scene. With SCLD page-flip each buffer is 2 frames stale, so each buffer erases *its own* last-drawn positions (`prev[2][]`). This is the dirty-rect approach, pulled forward out of necessity. |
 | D7 | **No floating point, no malloc, no recursion.** Integer math, fixed-size arrays, object pools, precomputed tables. | Project hard constraint. Ship rotation uses a precomputed integer rotated-vertex table (no runtime trig). |
 | D8 | **Program ORG at `0x8000`**, leaving `0x6000–0x7AFF` reserved for the screen-B back buffer. | The back buffer lives in the middle of the normal program load area; the linker must not emit anything there. |
 
@@ -122,8 +122,9 @@ Bit 6 set would disable the frame interrupt (§2.1) and hang the `HALT` loop, so
 
 True twin-stick: move and shoot are independent.
 
-- **Kempston joystick** → 8-way movement. (`in_JoyKempston()`, confirmed present; returns the **normalised** masks `in_UP/DOWN/LEFT/RIGHT/FIRE` from `<input.h>`, *not* raw port bits — see §2.1.)
-- **Kempston FIRE button** → shoot in the **facing** direction (the ship faces the direction it is moving).
+- **Kempston joystick** → 8-way movement. (`in_stick_kempston()`, confirmed present; reads port `$1F` and returns the **normalised** masks `JOY_UP/DOWN/LEFT/RIGHT/FIRE`, *not* raw port bits — verified §2.1/§15.)
+- **Cursor (Protek) joystick → 8-way movement + fire** *(added at M1)*: keys **5=left, 6=down, 7=up, 8=right, 0=fire**. Read as a normalised `JOY_*` byte and **OR-merged with the Kempston byte**, so it flows through the same `make_intent()` with no logic change; `0` sets `JOY_FIRE` → shoots in the facing direction. This keeps the game fully playable with **no joystick hardware** — important because macOS Fuse's HID/gamepad path (`IOCreatePlugInInterfaceForService`) frequently fails (§15.5).
+- **Kempston / cursor FIRE button** → shoot in the **facing** direction (the ship faces the direction it is moving).
 - **Keyboard Q W E / A · D / Z X C** → shoot in 8 absolute directions:
   ```
   Q W E      NW  N  NE
@@ -227,8 +228,13 @@ export ZCCCFG="$HOME/Programowanie/z88dk/lib/config"
 # input.h) so they don't shadow z88dk system headers (§2.1).
 zcc +zx -SO3 -clib=sdcc_iy -iquote"$PWD/include" src/*.c -o build/game -create-app
 
-# Run on Fuse, Timex TC2048 machine model (VERIFIED: tc2048 id + --tape exist in this build).
-/Applications/Fuse.app/Contents/MacOS/Fuse --machine tc2048 --tape build/game.tap
+# Run on Fuse, Timex TC2048 machine model.
+# CORRECTED at M1 SCLD smoke test: this macOS Fuse build's machine id is `2048`,
+# NOT `tc2048` (the earlier spec value made Fuse abort: "Machine id 'tc2048'
+# unknown"). The binary's machine-id strings are 2048 / 2068 / ts2068 / pentagon.
+# `--auto-load` is also rejected by this build at runtime (auto-load is on by
+# default regardless), so pass only --machine + --tape.
+/Applications/Fuse.app/Contents/MacOS/Fuse --machine 2048 --tape build/game.tap
 ```
 
 Notes (verified in the M1 test build): `-clib=sdcc_iy` works; classic `default` clib chokes on empty `for(;;){}` bodies (sccz80 optimiser) — use a non-empty idle or `sdcc_iy`. `-create-app` emits the `.tap` (default `+zx` subtype). `-zorg` is **not** needed (ORG defaults to 0x8000). This **GUI** Fuse build exposes **no headless screenshot/SVG flag**, so visual checks are a manual GUI step.
@@ -268,3 +274,98 @@ Notes (verified in the M1 test build): `-clib=sdcc_iy` works; classic `default` 
 ## 14. Milestone mapping
 
 This slice corresponds to the prompt's **Milestone 1** (build, launch in Fuse, sprite/ship on screen, read keyboard + Kempston) and **Milestone 2** (player movement, arena/loop), plus an early sliver of **Milestone 3** (bullets, no cleanup-by-collision yet). Subsequent specs resume at full Milestone 3+ (collision, score, enemy AI, waves, sound, polish).
+
+---
+
+## 15. Milestone 1 — implemented & MEASURED (revision, 2026-06-21)
+
+What was actually built and measured on the installed z88dk + Fuse. Where this
+contradicts earlier sections, **this section wins** (it is empirical).
+
+### 15.1 Status
+
+A **playable slice runs on Fuse-as-TC2048**: an 8×8 player ship moving via
+Kempston (wrap), 2 stationary 8×8 enemies, a 16-bullet pool firing
+(Kempston-fire-in-facing or QWEADZXC 8-way), all flicker-free double-buffered.
+Built in four verified steps: build smoke test → SCLD page-flip smoke test →
+double-buffered motion → playable sprite slice.
+
+### 15.2 The reusable Timex SCLD library (the "homage" kernel)
+
+The Timex-specific core is its own self-contained, documented, host-tested
+module — designed to be extracted later as a standalone library (there is
+essentially no documented/tested TC2048 SCLD double-buffer C online):
+
+```
+include/scld.h  src/scld.c   Timex SCLD standard-res DOUBLE BUFFERING:
+                             scld_init / scld_back / scld_back_page /
+                             scld_present (HALT+flip) / scld_clear, plus pure
+                             host-tested addressing: scld_scanline,
+                             scld_next_scanline, scld_row_off[] table.
+                             The ONLY code that knows port 0xFF + 0x4000/0x6000.
+include/sprite.h src/sprite.c pixel-positioned masked 8×8 OR-blit + box erase,
+                             using the scld_row_off[] line-address table.
+include/sprites.h src/sprites.c 8×8 bitmaps (ship, enemy, bullet).
+include/enemy.h  src/enemy.c  stationary enemies (placeholder for AI later).
+```
+Existing pure-logic modules unchanged: `player.c bullet.c input.c geometry.c`
+(host-tested). `main.c` is the glue (input → logic → incremental render →
+present) and the API's first consumer. Host tests now include `test_scld`
+(addressing math, all y). `video.c` from §4 is realised as **`scld.c`**.
+
+### 15.3 Measured performance (z88dk-ticks, T-states; frame = 69,888 T @ 50 Hz, ~55k usable)
+
+| Operation | Cost | Verdict |
+|---|---|---|
+| SCLD page-flip (`OUT 0xFF`) | **123 T** (0.18%) | free — double buffering itself is a non-issue |
+| `memset` clear, 6144 B (full screen) | **129,034 T** (1.85 frames) | ❌ too slow per frame → drove D6 to incremental |
+| stack-`PUSH` asm clear, 6144 B (prototype) | **35,452 T** (5.8 T/B) | ✅ 3.6× faster, *if* a full clear is ever needed (not integrated — see 15.5) |
+| 8×8 sprite erase+draw, **naive C** (recompute addr/row) | **9,199 T** | ❌ ~5 sprites |
+| 8×8 sprite erase+draw, **C + line-address table** | **~9,000 T** | ⚠ ~6 sprites/50 Hz — the table fixed correctness, not the C codegen cost |
+
+**Headline finding:** double-buffering is essentially free; the limiter is the
+**cost of blitting in C** (~9k T per 8×8 sprite erase+draw), giving only ~6
+sprites at 50 Hz. It is **not lines specifically** that "kill the Z80" — both
+masked sprite blits *and* line draws are heavy in compiled C. The real lever is
+hand-written **asm for the hot drawing inner loop** (expected ~5–10×).
+
+### 15.4 Rendering model (incremental, double-buffer-aware)
+
+Per frame, into the hidden buffer: erase the positions THIS buffer drew last
+time (it is 2 frames stale — tracked in `prev[bi][]`), then redraw player +
+enemies + active bullets, recording new positions, then `scld_present()`. No
+per-frame full clear. Sprites currently clip at the right/bottom edges (toroidal
+wrap-duplicate drawing — D5 — is not yet implemented for sprites).
+
+### 15.5 Toolchain facts nailed down at M1
+
+- **Fuse machine id is `2048`, NOT `tc2048`** (§10). `--kempston` maps Kempston to Q/A/O/P/Space (overlaps our QWEADZXC fire keys — prefer a real pad bound to Kempston). This GUI Fuse has no headless screenshot.
+- **Port output:** under `sdcc_iy`, `outp()` from `<stdlib.h>` is *not* declared (implicit-decl → wrong call). Use **`z80_outp()` from `<z80.h>`**. Interrupts/HALT via `<intrinsic.h>` (`intrinsic_im_1/ei/halt`). `__SPECTRUM` is defined for `+zx` (so `input.c`'s hardware read compiles).
+- **Headless verification with z88dk-ticks:** `-counter N -output` reliably dumps RAM mid-run; `-end 0x0000` is unreliable (exit path varies). The Fuse window remains the authority for what's actually displayed.
+- **Hand-asm has a calling-convention wrinkle** under sdcc_iy (single-arg register passing for `__z88dk_fastcall` did not behave as a naive port expected). Parameterless / fixed-address asm worked; argument-passing needs care before the asm blitter lands.
+
+### 15.6 Line drawing — verdict
+
+**Deferred.** Not built. A Bresenham line is per-pixel address+mask work — in C
+that is as costly as (or worse than) sprite blitting, which already needs asm.
+There is no point carrying a slow C line routine "just in case." It returns only
+when (a) a concrete feature needs it and (b) it is written/measured in asm.
+
+### 15.7 Next steps
+
+Done since first draft:
+- ✅ **Asm 8×8 blit + erase** (`blit.asm`, shift in asm): 9k → ~5.1k T/sprite (erase+draw), ~10 sprites @ 50 Hz. Calling convention resolved via globals (§15.5).
+- ✅ **Cursor (Protek) keyboard joystick** (5/6/7/8 + 0) merged into the Kempston byte (§6) — playable without joystick hardware (macOS Fuse HID often fails).
+- ✅ **Collision** bullet↔enemy (`collision.c`, host-tested) wired into the loop: bullets destroy enemies, a cleared wave respawns; fire cooldown caps the bullet/sprite load.
+- ✅ **Randomly-wandering enemies** (`enemy.c` + `rng.c` 16-bit LFSR, host-tested): enemies drift and re-roll direction occasionally, toroidal wrap. *No* player tracking yet (deliberate).
+- ✅ **Player death**: `player_hit` (host-tested) → on contact the ship resets to centre and the wave respawns (safe spots, no instant re-death).
+- ✅ **Colour background**: static 8×8 attributes (blue arena frame + blue/black checker, white ink) painted once on **both** buffers (`bg_paint` in main.c) so the page-flip never disturbs colour — first use of D1 with actual colour. Black ULA border.
+- ✅ **`run-zesarux.sh`**: saved launch (TC2048 + `--enabletimexvideo --joystickemulated Kempston --verbose 0`); ZEsarUX is the smoother Timex target than this macOS Fuse build.
+
+Remaining (rough priority):
+1. Push the rest of the blit (address calc) into asm → ~20–30 sprites @ 50 Hz (current limiter is the C wrapper, not the inner loop).
+2. Directional ship: 8 sprite frames indexed by `player.facing` (data only).
+3. Score + HUD (digit sprites), lives, and a TITLE→PLAYING state with the welcome screen.
+4. Enemy variety: player-tracking AI, spawn waves of increasing size (Milestone 4/6).
+5. Toroidal wrap-duplicate sprite drawing (D5) + wrap-aware collision (enemies now roam to edges).
+6. Optional: integrate the asm `scld_clear` only if a full-clear path is ever needed.

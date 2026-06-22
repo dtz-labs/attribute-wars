@@ -37,6 +37,30 @@ u8 decode_aim_keys(u8 keys)
     return DIR_NONE;
 }
 
+void decode_move_keys(u8 keys, s8 *dx, s8 *dy)
+{
+    u8 dir = decode_aim_keys(keys);
+    if (dir == DIR_NONE) {
+        *dx = 0;
+        *dy = 0;
+        return;
+    }
+    *dx = dir_dx[dir];
+    *dy = dir_dy[dir];
+}
+
+u8 joy_sanitize(u8 joy)
+{
+    /* Opposing directions can't both be held on a real stick -> floating bus. */
+    if ((u8)(joy & (JOY_UP | JOY_DOWN)) == (JOY_UP | JOY_DOWN)) {
+        return 0;
+    }
+    if ((u8)(joy & (JOY_LEFT | JOY_RIGHT)) == (JOY_LEFT | JOY_RIGHT)) {
+        return 0;
+    }
+    return joy;
+}
+
 u8 update_facing(u8 prev_facing, s8 move_dx, s8 move_dy)
 {
     if (move_dx == 0 && move_dy == 0) {
@@ -80,6 +104,50 @@ void make_intent(u8 joy, u8 keys, u8 facing, intent_t *out)
  * IN_KEY_SCANCODE_* / IN_STICK_* constants. The IN_STICK_* bit values match
  * our JOY_* masks (UP=0x01, DOWN=0x02, LEFT=0x04, RIGHT=0x08, FIRE=0x80). */
 #include <input.h>
+#include <z80.h>          /* z80_inp/z80_outp -- TS2068 AY joystick ports */
+
+/* ---- TS2068 built-in joysticks (CTRL_DUAL_STICK) -------------------------
+ * Verified against the TS2068 Technical Manual (port map) AND the Fuse
+ * emulator's tc2068.c bus model:
+ *   - The two sticks hang off the AY-3-8912 I/O port A (AY register 14).
+ *   - Port $F5 selects an AY register; port $F6 reads it.
+ *   - Reg 7 bit 6 must be 0 (port A = input) or reg 14 reads back its latch.
+ *   - A8 high (port $01F6) strobes joystick 1 (LEFT); A9 high (port $02F6)
+ *     strobes joystick 2 (RIGHT).  z80_inp() puts the 16-bit port on the bus,
+ *     so the high byte supplies A8/A9.
+ *   - Data bits are ACTIVE LOW: 0=up 1=down 2=left 3=right 7=fire -- the same
+ *     positions as our JOY_* masks, so one inversion yields a JOY_* byte.
+ * On a TC2048 (no AY) these ports float to 0xFF -> inverted to 0 -> inert, so
+ * the scheme harmlessly falls through to the Sinclair-keyboard read below. */
+#define AY_PORT_SEL  0xF5u
+#define AY_PORT_DAT  0xF6u
+#define AY_REG_MIXER 7u
+#define AY_REG_IOA   14u
+#define TS_JOY1_PORT 0x01F6u   /* A8 high -> joystick 1 (left)  */
+#define TS_JOY2_PORT 0x02F6u   /* A9 high -> joystick 2 (right) */
+#define JOY_DIRS     (JOY_UP | JOY_DOWN | JOY_LEFT | JOY_RIGHT | JOY_FIRE)
+
+/* Set AY register 7 bit 6 = 0 (I/O port A = input) so the joystick lines read.
+ * Read-modify-write to preserve the sound channel-enable bits. Harmless no-op
+ * on a TC2048 (the AY ports are unmapped there). */
+static void ts2068_joy_init(void)
+{
+    u8 r7;
+    z80_outp(AY_PORT_SEL, AY_REG_MIXER);
+    r7 = z80_inp(AY_PORT_DAT);
+    z80_outp(AY_PORT_SEL, AY_REG_MIXER);
+    z80_outp(AY_PORT_DAT, (u8)(r7 & (u8)~0x40u));
+}
+
+/* Read one TS2068 built-in joystick (TS_JOY1_PORT / TS_JOY2_PORT) as a JOY_*
+ * byte (active high). */
+static u8 ts2068_read_joy(u16 port)
+{
+    u8 raw;
+    z80_outp(AY_PORT_SEL, AY_REG_IOA);   /* select I/O port A */
+    raw = z80_inp(port);                 /* A8/A9 (high byte) pick the stick */
+    return (u8)(~raw & JOY_DIRS);
+}
 
 static u8 read_aim_keys(void)
 {
@@ -95,11 +163,93 @@ static u8 read_aim_keys(void)
     return k;
 }
 
+/* Cursor / Protek joystick: keys 5/6/7/8 move, 0 fires -- returned as a
+ * normalised JOY_* byte so it merges (OR) with the Kempston read and flows
+ * through the same make_intent() logic. 0 sets JOY_FIRE -> shoots in the
+ * facing direction, exactly like the Kempston fire button. This makes the game
+ * playable with no joystick hardware (handy when macOS Fuse's HID/gamepad path
+ * fails). The classic Spectrum cursor layout: 5=left 6=down 7=up 8=right. */
+static u8 read_cursor_joy(void)
+{
+    u8 j = 0;
+    if (in_key_pressed(IN_KEY_SCANCODE_5)) j |= JOY_LEFT;
+    if (in_key_pressed(IN_KEY_SCANCODE_6)) j |= JOY_DOWN;
+    if (in_key_pressed(IN_KEY_SCANCODE_7)) j |= JOY_UP;
+    if (in_key_pressed(IN_KEY_SCANCODE_8)) j |= JOY_RIGHT;
+    if (in_key_pressed(IN_KEY_SCANCODE_0)) j |= JOY_FIRE;
+    return j;
+}
+
+/* Active control scheme (CTRL_*), set from the title screen. The pure decode
+ * logic is identical across schemes; only the input SOURCES differ here. */
+static u8 g_scheme = CTRL_KEMPSTON_MOVE;
+
+void input_set_scheme(u8 scheme)
+{
+    g_scheme = scheme;
+    if (scheme == CTRL_DUAL_STICK) {
+        ts2068_joy_init();   /* arm the AY port-A-input read on a TS2068 */
+    }
+}
+
+/* Aim in `facing` and fire -- shared by the fire-button schemes. */
+static void fire_facing(u8 facing, intent_t *out)
+{
+    out->aim_dx = 0;
+    out->aim_dy = 0;
+    out->fire   = 0;
+    if (facing != DIR_NONE) {
+        out->aim_dx = dir_dx[facing];
+        out->aim_dy = dir_dy[facing];
+        out->fire   = 1;
+    }
+}
+
 void input_read(u8 facing, intent_t *out)
 {
-    u8 joy  = (u8)in_stick_kempston();  /* IN_STICK_* bits == our JOY_* masks */
-    u8 keys = read_aim_keys();
-    make_intent(joy, keys, facing, out);
+    if (g_scheme == CTRL_KEMPSTON_FIRE) {
+        /* QWEADZXC move; Kempston button (or 0) fires in the facing direction. */
+        u8 keys = read_aim_keys();
+        u8 joy  = joy_sanitize((u8)in_stick_kempston());
+        decode_move_keys(keys, &out->move_dx, &out->move_dy);
+        if ((joy & JOY_FIRE) || in_key_pressed(IN_KEY_SCANCODE_0)) {
+            fire_facing(facing, out);
+        } else {
+            out->aim_dx = 0; out->aim_dy = 0; out->fire = 0;
+        }
+        return;
+    }
+
+    if (g_scheme == CTRL_DUAL_STICK) {
+        /* Twin-stick. LEFT stick moves, RIGHT stick gives an absolute 8-way aim
+         * with autofire. Each stick is the TS2068 built-in joystick OR-merged
+         * with the matching Sinclair-keyboard read, so it is authentic on a real
+         * TS2068 yet still playable/testable from the keyboard on a TC2048:
+         *   move : TS2068 joy 1  |  Sinclair 1 (keys 6/7/8/9/0)
+         *   aim  : TS2068 joy 2  |  Sinclair 2 (keys 1/2/3/4/5) */
+        u8 mv  = (u8)(joy_sanitize(ts2068_read_joy(TS_JOY1_PORT)) |
+                      joy_sanitize((u8)in_stick_sinclair1()));
+        u8 aim = (u8)(joy_sanitize(ts2068_read_joy(TS_JOY2_PORT)) |
+                      joy_sanitize((u8)in_stick_sinclair2()));
+        s8 adx, ady;
+        decode_move(mv,  &out->move_dx, &out->move_dy);
+        decode_move(aim, &adx, &ady);
+        if (adx != 0 || ady != 0) {
+            out->aim_dx = adx; out->aim_dy = ady; out->fire = 1;
+        } else {
+            out->aim_dx = 0; out->aim_dy = 0; out->fire = 0;
+        }
+        return;
+    }
+
+    /* CTRL_KEMPSTON_MOVE (default): Kempston + cursor keys move, QWEADZXC aims.
+     * Sanitise the Kempston read (drop a floating port) BEFORE merging the
+     * cursor keys, so a floating Kempston can't mask keyboard movement. */
+    {
+        u8 joy  = (u8)(joy_sanitize((u8)in_stick_kempston()) | read_cursor_joy());
+        u8 keys = read_aim_keys();
+        make_intent(joy, keys, facing, out);
+    }
 }
 
 #endif /* __SPECTRUM */

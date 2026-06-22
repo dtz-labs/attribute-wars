@@ -42,6 +42,19 @@ static void test_decode_aim_keys(void)
     CHECK(decode_aim_keys(KEY_Q | KEY_D) == DIR_NW);
 }
 
+static void test_decode_move_keys(void)
+{
+    s8 dx, dy;
+    /* CTRL_KEMPSTON_FIRE drives MOVEMENT from QWEADZXC -> -1/0/+1 steps. */
+    decode_move_keys(0, &dx, &dy);       CHECK(dx == 0 && dy == 0);
+    decode_move_keys(KEY_W, &dx, &dy);   CHECK(dx == 0 && dy == -1);  /* N  */
+    decode_move_keys(KEY_X, &dx, &dy);   CHECK(dx == 0 && dy == 1);   /* S  */
+    decode_move_keys(KEY_A, &dx, &dy);   CHECK(dx == -1 && dy == 0);  /* W  */
+    decode_move_keys(KEY_D, &dx, &dy);   CHECK(dx == 1 && dy == 0);   /* E  */
+    decode_move_keys(KEY_E, &dx, &dy);   CHECK(dx == 1 && dy == -1);  /* NE */
+    decode_move_keys(KEY_Z, &dx, &dy);   CHECK(dx == -1 && dy == 1);  /* SW */
+}
+
 static void test_update_facing(void)
 {
     /* Idle keeps previous facing. */
@@ -84,12 +97,27 @@ static void test_make_intent(void)
     CHECK(in.fire == 1 && in.aim_dx == -1 && in.aim_dy == 1);
 }
 
+static void test_joy_sanitize(void)
+{
+    /* Valid readings pass through unchanged. */
+    CHECK(joy_sanitize(0)            == 0);
+    CHECK(joy_sanitize(JOY_LEFT)     == JOY_LEFT);
+    CHECK(joy_sanitize(JOY_UP | JOY_RIGHT) == (JOY_UP | JOY_RIGHT));
+    CHECK(joy_sanitize(JOY_FIRE | JOY_DOWN) == (JOY_FIRE | JOY_DOWN));
+    /* Floating bus (all bits set) and any opposing pair are dropped to 0. */
+    CHECK(joy_sanitize(0x8F)         == 0);   /* UP+DOWN+LEFT+RIGHT+FIRE */
+    CHECK(joy_sanitize(JOY_UP | JOY_DOWN)   == 0);
+    CHECK(joy_sanitize(JOY_LEFT | JOY_RIGHT) == 0);
+}
+
 int main(void)
 {
     test_decode_move();
     test_decode_aim_keys();
+    test_decode_move_keys();
     test_update_facing();
     test_make_intent();
+    test_joy_sanitize();
     printf("input: %d checks passed\n", checks);
     return 0;
 }

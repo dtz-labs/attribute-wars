@@ -10,7 +10,11 @@
 
 #include "types.h"
 
-#define MAX_BULLETS  16
+#define MAX_BULLETS  2      /* max 2 shots on screen at once -- also keeps the
+                             * per-frame collide/dodge/update loops short (they
+                             * iterate every slot), which was a real cost. The
+                             * hunter dodge-scan is O(enemies x bullets), so this
+                             * directly cuts the worst-case frame too. */
 #define BULLET_SPEED 4      /* pixels per frame, per axis */
 
 typedef struct {
