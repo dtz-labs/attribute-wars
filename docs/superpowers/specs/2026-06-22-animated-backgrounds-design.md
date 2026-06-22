@@ -36,15 +36,30 @@ vary **`paper`** (and must keep `bright` consistent); it must keep **`ink = 7`
 sprite). This is why plasma (which recolours ink) is fine for the game-over
 screen but wrong for the arena.
 
-The arena **frame ring** (row 0, row 23, col 0, col 31) carries the HUD (lives,
-shields, score text, timer/dash bars) and must stay `ATTR(1,3,7)` (bright
-magenta paper, white ink). Background patterns only touch the **interior**
-(rows 1–22, cols 1–30).
+The arena **frame ring** (row 0, row 23, col 0, col 31) carries the HUD and must
+stay `ATTR(1,3,7)` (bright magenta paper, white ink). Background patterns only
+touch the **interior** (rows 1–22, cols 1–30). What is actually live on the ring
+today: lives + shields (top, bitmap), the score as plain text on row 23 cols
+1–6, and a one-cell dash-ready dot (row 0 col 15). The `hud_draw_timer` bar is
+defined but **not currently wired** (dead code), and there is no boost bar — so
+"timer/dash bars" should not be assumed present. The interior is **100% free**
+of HUD/score in the current code (verified).
 
 ### `bg_attr` is the single source of truth
 `fx_render` (enemy-death pops) and the spawn telegraph restore cells by calling
-`bg_attr(row,col)`. If the chosen pattern flows through `bg_attr`, every restore
-path follows it automatically with no further change.
+`bg_attr(row,col)` — confirmed at `fx_render` (`main.c:214`), `telegraph_blink`
+(`main.c:314`), `telegraph_clear` (`main.c:324`). If the chosen pattern flows
+through `bg_attr`, every restore path follows it automatically with no further
+change.
+
+### Stale-comment landmine (delete during integration)
+A reverted feature ("score as big attribute-cell digits behind the action",
+`score_cell_attr`, `hud_paint_background`) left **misleading comments** in
+`main.c` (header block lines ~18–28, the `#include "hud.h"` comment at
+`main.c:42`, and `main.c:598`). None of those symbols exist anymore (the
+big-digit code was added in `fc252ef` and reverted in `fc371b1`). The
+implementer must **delete/fix these stale comments** while wiring `bg_cells`,
+and must not believe the interior is occupied by score digits — it is not.
 
 ### Measured paint cost (z88dk-ticks, throwaway harness, 100 iters ÷ 100)
 
@@ -92,9 +107,12 @@ pure-logic, host-tested tier; the per-screen draw/animation lives in `main.c`
 - `static u8 bg_cells[768]` in `main.c` — the active background (frame ring +
   interior).
 - `bg_attr(r,c)` becomes `return bg_cells[(u16)r*32 + c];` (cheap lookup).
-- `bg_paint()` becomes `memcpy(ATTRS_A, bg_cells, 768); memcpy(ATTRS_B,
-  bg_cells, 768);` (~32k T). Called at game start and after every death — this
+- `bg_paint()` becomes `memcpy((u8*)SCLD_ATTRS_A, bg_cells, SCLD_ATTRS_LEN);
+  memcpy((u8*)SCLD_ATTRS_B, bg_cells, SCLD_ATTRS_LEN);` (~32k T;
+  `SCLD_ATTRS_LEN == 768`). Called at game start and after every death — this
   *replaces* today's ~3-frame cell-by-cell recompute, so respawns get faster.
+  (Confirm z88dk's `memcpy` lowers to `LDIR`, not a byte loop; `<string.h>` is
+  already included in `main.c`.)
 
 ### `bgpat` API
 ```c
@@ -134,23 +152,33 @@ preference). Noisy set may use the wider safe palette.
 bright 0, plus selected bright accents for starfield — **never white(7)**.
 
 ### Selection state machine (in `main.c`, tunable constants)
-- **Fresh game** (startup; "new game" after game-over): roll a tier.
-  - `BG_MODE_STATIC` → pick one low-noise id (avoid immediate repeat), generate
-    once, keep for the whole run.
-  - `BG_MODE_WAVE` → set noisy mode; the per-wave hook (below) picks the first
-    shape.
-  - Odds tunable via a constant `BG_NOISY_PERCENT` (default ~50).
-- **Wave advance** (where `g.wave` increments and the new wave is spawned): if
-  `BG_MODE_WAVE`, pick a noisy id (avoid immediate repeat), regenerate
-  `bg_cells`, repaint. Regeneration (~1–2 frames) lands during the wave-start
-  telegraph pause, so it is not visible as a stutter. If `BG_MODE_STATIC`, do
-  nothing.
-- **Respawn after death** (same run): repaint only (`bg_paint`) — pattern
-  unchanged.
+A `bg_new_run()` helper rolls the tier and generates the first `bg_cells`:
+- `BG_MODE_STATIC` → pick one low-noise id (avoid immediate repeat), generate
+  once, keep for the whole run.
+- `BG_MODE_WAVE` → set noisy mode and immediately pick + generate the first
+  noisy shape (so the opening wave already shows it).
+- Odds tunable via `BG_NOISY_PERCENT` (default ~50).
 
-Integration points to confirm during planning: the two fresh-game sites
-(`game_new`), the post-death repaint site (already calls `bg_paint`), and the
-wave-advance site.
+**Where it is called (verified line numbers, HEAD `3a216ec` — re-confirm before
+editing):**
+- **Startup:** call `bg_new_run()` before the first `bg_paint()` (currently
+  `main.c:639`).
+- **Leaving the game-over screen:** the game-over branch (`main.c:789–793`) has
+  two outcomes — `game_resume_from_wave` (`:790`) and `game_new` (`:792`). Treat
+  **both** as a fresh start: call `bg_new_run()` in that branch, **before** the
+  shared cleanup block's `bg_paint()` at `main.c:799`. (Decision: resume-from-
+  wave re-rolls the background, like a new game — the player perceives both as
+  "the game starting again".)
+- **In-run respawn** (lives remaining, the `else` at `main.c:794–796`): do
+  **not** re-roll. The shared `bg_paint()` at `:799` repaints the existing
+  `bg_cells` unchanged.
+- **Wave advance** (`main.c:757–765`, where `g.wave++` at `:759` precedes
+  `enemies_spawn` at `:761`): **there is no `bg_paint()` here today** — this is
+  net-new wiring. In `BG_MODE_WAVE`, pick a noisy id (avoid immediate repeat),
+  regenerate `bg_cells`, then `bg_paint()`. In `BG_MODE_STATIC`, do nothing.
+  Regeneration (~1–2 frames) runs on the same frame as `enemies_spawn`, before
+  the `TELEGRAPH_FRAMES` (=80) telegraph during which enemies are inert, so the
+  hitch is hidden.
 
 ### Tests (`test/test_bgpat.c`)
 - Readability invariant: for every interior cell of every pattern (across a
@@ -220,6 +248,12 @@ the point budget can't hold it — fine for a slow spin.
 3. **Phase 3** — title globe (title double-buffer rework + fixed-point 3D).
 
 Each phase is independently shippable and verified in ZEsarUX.
+
+**Mechanical build wiring (don't forget):** register new sources `src/fxtab.c`
+and `src/bgpat.c` in `build.sh` (the `zcc … src/*.c` list, ~`build.sh:24-27`),
+and add `test/test_fxtab.c` + `test/test_bgpat.c` to `test/run.sh` (mirror the
+existing per-test compile lines). The two new modules are pure-logic and link
+cleanly host-side; `main.c` stays target-only (not host-built).
 
 ## 8. Tooling
 
