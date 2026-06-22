@@ -37,4 +37,7 @@ enum {
 #define SCREEN_W 256u   /* x is a u8: wraps 0..255 automatically            */
 #define SCREEN_H 192u   /* y must be wrapped manually (not a power of two)   */
 
+/* Attribute byte: FLASH(7) BRIGHT(6) PAPER(5-3) INK(2-0). Shared everywhere. */
+#define ATTR(bright, paper, ink) ((u8)(((bright) << 6) | ((paper) << 3) | (ink)))
+
 #endif /* TYPES_H */

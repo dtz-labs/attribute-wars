@@ -16,10 +16,7 @@
 #ifndef HUD_H
 #define HUD_H
 
-#include "types.h"
-
-/* Attribute byte: FLASH(7) BRIGHT(6) PAPER(5-3) INK(2-0). Shared with main.c. */
-#define ATTR(bright, paper, ink) ((u8)(((bright) << 6) | ((paper) << 3) | (ink)))
+#include "types.h"   /* ATTR macro lives here */
 
 /* Write one attribute cell to BOTH blocks (shows on whichever page is flipped
  * in). Lives in hud.c; main.c's fx/death/telegraph paths call it too. */
