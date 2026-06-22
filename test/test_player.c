@@ -14,7 +14,7 @@ static int checks = 0;
 /* Build an intent with just a movement step (no fire). */
 static intent_t mv(s8 dx, s8 dy)
 {
-    intent_t in = {0, 0, 0, 0, 0};
+    intent_t in = {0, 0, 0, 0, 0, 0};
     in.move_dx = dx;
     in.move_dy = dy;
     return in;

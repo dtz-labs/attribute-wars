@@ -69,25 +69,35 @@ u8 update_facing(u8 prev_facing, s8 move_dx, s8 move_dy)
     return dir_from_steps(move_dx, move_dy);
 }
 
+u8 decode_aim_joy(u8 joy, s8 *adx, s8 *ady)
+{
+    /* Extract directional tilt (ignore the FIRE bit for aim computation). */
+    u8 dirs = (u8)(joy & (JOY_UP | JOY_DOWN | JOY_LEFT | JOY_RIGHT));
+    decode_move(dirs, adx, ady);
+    /* Any of: directional tilt or FIRE bit alone -> fire is set. */
+    if (joy != 0) {
+        return 1;
+    }
+    return 0;
+}
+
 void make_intent(u8 joy, u8 keys, u8 facing, intent_t *out)
 {
     u8 aim;
+    (void)facing;   /* Scheme A: JOY_FIRE now boosts, not fires-in-heading. */
 
     decode_move(joy, &out->move_dx, &out->move_dy);
     out->aim_dx = 0;
     out->aim_dy = 0;
     out->fire   = 0;
+    /* JOY_FIRE (including cursor 0 merged in by read_cursor_joy) -> boost. */
+    out->boost  = (joy & JOY_FIRE) ? 1u : 0u;
 
     aim = decode_aim_keys(keys);
     if (aim != DIR_NONE) {
         /* QWEADZXC gives an absolute 8-way aim, overriding facing. */
         out->aim_dx = dir_dx[aim];
         out->aim_dy = dir_dy[aim];
-        out->fire   = 1;
-    } else if ((joy & JOY_FIRE) && facing != DIR_NONE) {
-        /* Kempston fire shoots in the direction the ship faces. */
-        out->aim_dx = dir_dx[facing];
-        out->aim_dy = dir_dy[facing];
         out->fire   = 1;
     }
 }
@@ -165,10 +175,10 @@ static u8 read_aim_keys(void)
 
 /* Cursor / Protek joystick: keys 5/6/7/8 move, 0 fires -- returned as a
  * normalised JOY_* byte so it merges (OR) with the Kempston read and flows
- * through the same make_intent() logic. 0 sets JOY_FIRE -> shoots in the
- * facing direction, exactly like the Kempston fire button. This makes the game
- * playable with no joystick hardware (handy when macOS Fuse's HID/gamepad path
- * fails). The classic Spectrum cursor layout: 5=left 6=down 7=up 8=right. */
+ * through make_intent(). 0 sets JOY_FIRE -> boosts (scheme A: JOY_FIRE=boost).
+ * This makes the game playable with no joystick hardware (handy when macOS
+ * Fuse's HID/gamepad path fails). Classic Spectrum cursor: 5=left 6=down
+ * 7=up 8=right. */
 static u8 read_cursor_joy(void)
 {
     u8 j = 0;
@@ -208,11 +218,33 @@ static void fire_facing(u8 facing, intent_t *out)
 void input_read(u8 facing, intent_t *out)
 {
     if (g_scheme == CTRL_KEMPSTON_FIRE) {
-        /* QWEADZXC move; Kempston button (or 0) fires in the facing direction. */
+        /* Scheme B: QWEADZXC moves; Kempston tilt -> aim+fire; Kempston FIRE
+         * button -> fire in heading; S key -> boost.
+         *
+         * Read the raw Kempston byte first, then split it:
+         *   - Directional bits (tilt) -> aim+fire via decode_aim_joy.
+         *   - JOY_FIRE with no tilt -> fire_facing (fire-in-heading).
+         *   - JOY_FIRE is NOT boost in this scheme (that is S key).
+         */
         u8 keys = read_aim_keys();
         u8 joy  = joy_sanitize((u8)in_stick_kempston());
+        u8 dirs = (u8)(joy & (JOY_UP | JOY_DOWN | JOY_LEFT | JOY_RIGHT));
+        s8 adx, ady;
+        u8 joy_fires;
+
         decode_move_keys(keys, &out->move_dx, &out->move_dy);
-        if ((joy & JOY_FIRE) || in_key_pressed(IN_KEY_SCANCODE_0)) {
+        out->boost = in_key_pressed(IN_KEY_SCANCODE_s) ? 1u : 0u;
+
+        joy_fires = (u8)(joy & JOY_FIRE);
+
+        if (dirs != 0) {
+            /* Kempston tilt: aim in the deflection direction and fire. */
+            decode_aim_joy(joy, &adx, &ady);
+            out->aim_dx = adx;
+            out->aim_dy = ady;
+            out->fire   = 1;
+        } else if (joy_fires) {
+            /* Fire button, no tilt: fire in the current heading. */
             fire_facing(facing, out);
         } else {
             out->aim_dx = 0; out->aim_dy = 0; out->fire = 0;
@@ -221,10 +253,12 @@ void input_read(u8 facing, intent_t *out)
     }
 
     if (g_scheme == CTRL_DUAL_STICK) {
-        /* Twin-stick. LEFT stick moves, RIGHT stick gives an absolute 8-way aim
-         * with autofire. Each stick is the TS2068 built-in joystick OR-merged
-         * with the matching Sinclair-keyboard read, so it is authentic on a real
-         * TS2068 yet still playable/testable from the keyboard on a TC2048:
+        /* Scheme C: TS2068 twin-stick.
+         *   Left stick  -> move; its FIRE button -> boost.
+         *   Right stick -> aim+fire (tilt = aim+fire).
+         * Each stick is the TS2068 built-in joystick OR-merged with the
+         * matching Sinclair-keyboard read, so it is authentic on a real TS2068
+         * yet still playable/testable from the keyboard on a TC2048:
          *   move : TS2068 joy 1  |  Sinclair 1 (keys 6/7/8/9/0)
          *   aim  : TS2068 joy 2  |  Sinclair 2 (keys 1/2/3/4/5) */
         u8 mv  = (u8)(joy_sanitize(ts2068_read_joy(TS_JOY1_PORT)) |
@@ -232,9 +266,13 @@ void input_read(u8 facing, intent_t *out)
         u8 aim = (u8)(joy_sanitize(ts2068_read_joy(TS_JOY2_PORT)) |
                       joy_sanitize((u8)in_stick_sinclair2()));
         s8 adx, ady;
+
         decode_move(mv,  &out->move_dx, &out->move_dy);
-        decode_move(aim, &adx, &ady);
-        if (adx != 0 || ady != 0) {
+        /* Left stick FIRE -> boost. */
+        out->boost = (mv & JOY_FIRE) ? 1u : 0u;
+
+        /* Right stick tilt -> aim+fire. */
+        if (decode_aim_joy(aim, &adx, &ady)) {
             out->aim_dx = adx; out->aim_dy = ady; out->fire = 1;
         } else {
             out->aim_dx = 0; out->aim_dy = 0; out->fire = 0;
@@ -242,13 +280,18 @@ void input_read(u8 facing, intent_t *out)
         return;
     }
 
-    /* CTRL_KEMPSTON_MOVE (default): Kempston + cursor keys move, QWEADZXC aims.
+    /* Scheme A (CTRL_KEMPSTON_MOVE, default): Kempston + cursor keys move;
+     * QWEADZXC aims and fires; JOY_FIRE (incl. cursor 0) + SPACE -> boost.
      * Sanitise the Kempston read (drop a floating port) BEFORE merging the
      * cursor keys, so a floating Kempston can't mask keyboard movement. */
     {
         u8 joy  = (u8)(joy_sanitize((u8)in_stick_kempston()) | read_cursor_joy());
         u8 keys = read_aim_keys();
         make_intent(joy, keys, facing, out);
+        /* SPACE also boosts (make_intent already sets boost from JOY_FIRE). */
+        if (in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
+            out->boost = 1;
+        }
     }
 }
 
