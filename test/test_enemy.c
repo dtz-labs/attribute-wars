@@ -25,14 +25,11 @@ static void test_wave_table(void)
 {
     u8 i;
     check("WAVE_COUNT is 16", WAVE_COUNT == 16);
-    /* every wave: count >= n_bounce + n_chase + n_hunter */
+    /* every wave: mix must sum exactly to count (spec §5.4, all 16 rows satisfy this) */
     for (i = 0; i < WAVE_COUNT; i++) {
         const wave_t *w = &wave_table[i];
         check("wave mix sums to count",
-              w->n_bounce + w->n_chase + w->n_hunter == w->count ||
-              /* clamped waves: mix sums to original count from spec, but
-                 spawn uses MAX_ENEMIES cap so we just verify mix <= count */
-              w->n_bounce + w->n_chase + w->n_hunter >= w->count);
+              w->n_bounce + w->n_chase + w->n_hunter == w->count);
         check("wave time > 0", w->time_frames > 0u);
         check("wave count > 0", w->count > 0u);
     }
@@ -53,6 +50,11 @@ static void test_wave_table(void)
     check("wave16 n_bounce=0",  wave_table[15].n_bounce  == 0u);
     check("wave16 n_hunter=7",  wave_table[15].n_hunter  == 7u);
     check("wave16 time=1000",   wave_table[15].time_frames== 1000u);
+
+    /* per-wave pattern field is deterministic (not rng) for waves 1-16 */
+    check("wave5 pattern=STAR",      wave_table[4].pattern  == PAT_STAR);
+    check("wave6 pattern=FLANKS",    wave_table[5].pattern  == PAT_FLANKS);
+    check("wave7 pattern=DIAGONALS", wave_table[6].pattern  == PAT_DIAGONALS);
 }
 
 /* ---- spawn wave 1: 4 bouncers, all in-bounds ---- */
@@ -97,17 +99,33 @@ static void test_spawn_wave8(void)
     check("wave8 n_hunter==2", nh == 2u);
 }
 
-/* ---- two consecutive spawns must pick different patterns ---- */
+/* ---- waves 1-16: pattern comes from table (deterministic, not rng) ---- */
+static void test_pattern_from_table(void)
+{
+    enemies_t es;
+    /* Regardless of rng seed, wave 5 must use PAT_STAR (table field). */
+    rng_seed(0x1234u);
+    enemies_spawn(&es, 5);
+    check("wave5 uses PAT_STAR",      enemy_last_pattern() == PAT_STAR);
+    rng_seed(0xABCDu);
+    enemies_spawn(&es, 6);
+    check("wave6 uses PAT_FLANKS",    enemy_last_pattern() == PAT_FLANKS);
+    rng_seed(0x5678u);
+    enemies_spawn(&es, 7);
+    check("wave7 uses PAT_DIAGONALS", enemy_last_pattern() == PAT_DIAGONALS);
+}
+
+/* ---- wave > 16: rng-picked pattern must not repeat on consecutive spawns ---- */
 static void test_pattern_no_repeat(void)
 {
     enemies_t es;
     u8 first, second;
     rng_seed(0x1234u);
-    enemies_spawn(&es, 5);
+    enemies_spawn(&es, 17);
     first  = enemy_last_pattern();
-    enemies_spawn(&es, 6);
+    enemies_spawn(&es, 18);
     second = enemy_last_pattern();
-    check("consecutive patterns differ", first != second);
+    check("endless-loop consecutive patterns differ", first != second);
 }
 
 /* ---- wave > 16 loops at index 15 ---- */
@@ -222,6 +240,7 @@ int main(void)
     test_wave_table();
     test_spawn_wave1();
     test_spawn_wave8();
+    test_pattern_from_table();
     test_pattern_no_repeat();
     test_wave_loop();
     test_wave0_guard();

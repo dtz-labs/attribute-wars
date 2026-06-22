@@ -139,14 +139,30 @@ void enemies_spawn(enemies_t *es, u8 wave)
     /* Index clamped to [0..15]; wave==0 → index 0 (wave 1); wave>16 → index 15 */
     {
         u8 idx;
+        u8 endless;   /* non-zero if wave > 16 (endless loop, rng-pick pattern) */
         if (wave == 0u || wave == 1u) {
             idx = 0u;
-        } else if (wave >= 16u) {
+            endless = 0u;
+        } else if (wave >= 17u) {
             idx = 15u;
+            endless = 1u;
         } else {
             idx = (u8)(wave - 1u);
+            endless = 0u;
         }
         w = &wave_table[idx];
+
+        /* (1) Pattern source: waves 1-16 use the per-wave table field.
+         *     Wave > 16 (endless) rng-picks, rerolling while == last_pattern. */
+        if (endless) {
+            pat = (u8)(rng_byte() % (u8)PAT_N);
+            while (pat == s_last_pattern) {
+                pat = (u8)(rng_byte() % (u8)PAT_N);
+            }
+        } else {
+            pat = w->pattern;
+        }
+        s_last_pattern = pat;
     }
 
     /* Clamp count to MAX_ENEMIES. */
@@ -154,13 +170,6 @@ void enemies_spawn(enemies_t *es, u8 wave)
     if (count > MAX_ENEMIES) {
         count = MAX_ENEMIES;
     }
-
-    /* (1) Pick pattern via RNG, reroll while equal to last_pattern. */
-    pat = (u8)(rng_byte() % (u8)PAT_N);
-    while (pat == s_last_pattern) {
-        pat = (u8)(rng_byte() % (u8)PAT_N);
-    }
-    s_last_pattern = pat;
 
     /* (2) Assign positions and levels.
      *     Level order: first n_bounce bouncers, then n_chase chasers,
@@ -188,19 +197,24 @@ void enemies_spawn(enemies_t *es, u8 wave)
             /* Assign level: first nb bounce, then nc chase, then nh hunter. */
             if (i < nb) {
                 e->level = ENEMY_BOUNCE;
+                /* (3) Two rng_byte() per BOUNCER for dx/dy initial direction.
+                 *     Chasers/hunters ignore dx/dy, so we draw nothing for them. */
+                e->dx = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
+                e->dy = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
             } else if (i < (u8)(nb + nc)) {
                 e->level = ENEMY_CHASE;
+                e->dx = (s8)0;
+                e->dy = (s8)0;
             } else {
                 e->level = ENEMY_HUNTER;
+                e->dx = (s8)0;
+                e->dy = (s8)0;
             }
         } else {
             e->alive = 0u;
+            e->dx = (s8)0;
+            e->dy = (s8)0;
         }
-        /* (3) Two rng_byte() per slot for dx/dy seed (always, preserving rng
-         *     sequence length regardless of alive state). Only meaningful for
-         *     bouncers, but we consume them unconditionally for determinism. */
-        e->dx = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
-        e->dy = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
     }
 }
 
