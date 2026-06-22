@@ -9,6 +9,22 @@
 *.o
 *.lis
 
+# Emulator logs & scratch state (never commit -- they leak local paths)
+*.log
+usb.txt
+
 # Editor backups / OS turds
 *~
 .DS_Store
+.AppleDouble
+._*
+Thumbs.db
+desktop.ini
+
+# Editor / IDE state
+.idea/
+.vscode/
+.history/
+
+# Brainstorming visual companion (transient mockups)
+.superpowers/
