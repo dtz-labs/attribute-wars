@@ -58,6 +58,23 @@ int main(void)
         }
     }
 
+    /* bgpat_pick stays in range and avoids the previous id. */
+    {
+        u8 rnd, prev, id; int in_range = 1, no_repeat = 1;
+        for (prev = BGPAT_NOISY_FIRST; prev < BGPAT_NOISY_FIRST + BGPAT_NOISY_COUNT; prev++) {
+            for (rnd = 0; rnd < 255u; rnd++) {
+                id = bgpat_pick(BGPAT_NOISY_FIRST, BGPAT_NOISY_COUNT, prev, rnd);
+                if (id < BGPAT_NOISY_FIRST || id >= BGPAT_NOISY_FIRST + BGPAT_NOISY_COUNT) in_range = 0;
+                if (id == prev) no_repeat = 0;
+            }
+        }
+        check("pick stays in tier range", in_range);
+        check("pick avoids immediate repeat", no_repeat);
+        /* prev=0xFF allows any id in range. */
+        check("pick with prev=0xFF in range",
+              bgpat_pick(BGPAT_LOWNOISE_FIRST, BGPAT_LOWNOISE_COUNT, 0xFFu, 200u) < BGPAT_LOWNOISE_COUNT);
+    }
+
     /* Determinism: same (id, seed) -> identical buffer. */
     {
         static u8 a[BGPAT_CELLS], b[BGPAT_CELLS];

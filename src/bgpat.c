@@ -92,3 +92,12 @@ void bgpat_generate(u8 *cells, u8 id, u16 seed)
         }
     }
 }
+
+u8 bgpat_pick(u8 first, u8 count, u8 prev, u8 rnd)
+{
+    u8 id = (u8)(first + (rnd % count));
+    if (count > 1u && id == prev) {
+        id = (u8)(first + (u8)(((u8)(id - first) + 1u) % count));
+    }
+    return id;
+}
