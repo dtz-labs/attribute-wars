@@ -59,7 +59,7 @@ int main(void)
 
     rng_seed(0xACE1u);
     bullets_init(&bullets);
-    enemies_spawn(&enemies, 40u);            /* mix incl. hunters (worst case) */
+    enemies_spawn(&enemies, 16u);            /* wave 16: worst-case hunter mix */
     bullet_spawn(&bullets, 120, 96, 1, 0);
     bullet_spawn(&bullets, 80, 70, 0, -1);
 

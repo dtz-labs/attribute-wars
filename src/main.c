@@ -410,7 +410,7 @@ int main(void)
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
-    enemies_spawn(&enemies, kills);
+    enemies_spawn(&enemies, 1u);  /* TODO Task 8: wire real wave number */
     hud_draw(lives, shields);
     prevn[0] = 0;
     prevn[1] = 0;
@@ -464,7 +464,7 @@ int main(void)
             }
 
             if (!enemies_any_alive(&enemies)) {
-                enemies_spawn(&enemies, kills);     /* next wave (telegraphed) */
+                enemies_spawn(&enemies, 1u);        /* next wave (telegraphed); TODO Task 8: wire real wave */
                 spawn_timer = TELEGRAPH_FRAMES;
             } else if (invuln == 0u && player_hit(player.x, player.y, &enemies)) {
                 fx_spawn(player.x, player.y);        /* hit pop at the ship */
@@ -491,7 +491,7 @@ int main(void)
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
-                    enemies_spawn(&enemies, kills);
+                    enemies_spawn(&enemies, 1u);      /* TODO Task 8: wire real wave */
                     spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn */
                     hud_draw(lives, shields);
                     cooldown = 0;
