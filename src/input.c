@@ -137,6 +137,21 @@ void make_intent(u8 joy, u8 keys, u8 facing, intent_t *out)
 #define TS_JOY2_PORT 0x02F6u   /* A9 high -> joystick 2 (right) */
 #define JOY_DIRS     (JOY_UP | JOY_DOWN | JOY_LEFT | JOY_RIGHT | JOY_FIRE)
 
+/* Spectrum keyboard matrix rows (active low, data bits D0..D4). Direct matrix
+ * reads avoid repeated z88dk in_key_pressed() calls in the 50 Hz game loop. */
+#define KB_ROW_SHIFT_ZXCV 0xFEFEu
+#define KB_ROW_ASDFG      0xFDFEu
+#define KB_ROW_QWERT      0xFBFEu
+#define KB_ROW_12345      0xF7FEu
+#define KB_ROW_09876      0xEFFEu
+#define KB_ROW_SPACE      0x7FFEu
+
+#define KB_BIT_0 0x01u
+#define KB_BIT_1 0x02u
+#define KB_BIT_2 0x04u
+#define KB_BIT_3 0x08u
+#define KB_BIT_4 0x10u
+
 /* Set AY register 7 bit 6 = 0 (I/O port A = input) so the joystick lines read.
  * Read-modify-write to preserve the sound channel-enable bits. Harmless no-op
  * on a TC2048 (the AY ports are unmapped there). */
@@ -162,14 +177,18 @@ static u8 ts2068_read_joy(u16 port)
 static u8 read_aim_keys(void)
 {
     u8 k = 0;
-    if (in_key_pressed(IN_KEY_SCANCODE_q)) k |= KEY_Q;
-    if (in_key_pressed(IN_KEY_SCANCODE_w)) k |= KEY_W;
-    if (in_key_pressed(IN_KEY_SCANCODE_e)) k |= KEY_E;
-    if (in_key_pressed(IN_KEY_SCANCODE_a)) k |= KEY_A;
-    if (in_key_pressed(IN_KEY_SCANCODE_d)) k |= KEY_D;
-    if (in_key_pressed(IN_KEY_SCANCODE_z)) k |= KEY_Z;
-    if (in_key_pressed(IN_KEY_SCANCODE_x)) k |= KEY_X;
-    if (in_key_pressed(IN_KEY_SCANCODE_c)) k |= KEY_C;
+    u8 row_qwe = (u8)~z80_inp(KB_ROW_QWERT);
+    u8 row_ad  = (u8)~z80_inp(KB_ROW_ASDFG);
+    u8 row_zxc = (u8)~z80_inp(KB_ROW_SHIFT_ZXCV);
+
+    if (row_qwe & KB_BIT_0) k |= KEY_Q;
+    if (row_qwe & KB_BIT_1) k |= KEY_W;
+    if (row_qwe & KB_BIT_2) k |= KEY_E;
+    if (row_ad  & KB_BIT_0) k |= KEY_A;
+    if (row_ad  & KB_BIT_2) k |= KEY_D;
+    if (row_zxc & KB_BIT_1) k |= KEY_Z;
+    if (row_zxc & KB_BIT_2) k |= KEY_X;
+    if (row_zxc & KB_BIT_3) k |= KEY_C;
     return k;
 }
 
@@ -182,12 +201,25 @@ static u8 read_aim_keys(void)
 static u8 read_cursor_joy(void)
 {
     u8 j = 0;
-    if (in_key_pressed(IN_KEY_SCANCODE_5)) j |= JOY_LEFT;
-    if (in_key_pressed(IN_KEY_SCANCODE_6)) j |= JOY_DOWN;
-    if (in_key_pressed(IN_KEY_SCANCODE_7)) j |= JOY_UP;
-    if (in_key_pressed(IN_KEY_SCANCODE_8)) j |= JOY_RIGHT;
-    if (in_key_pressed(IN_KEY_SCANCODE_0)) j |= JOY_FIRE;
+    u8 row_12345 = (u8)~z80_inp(KB_ROW_12345);
+    u8 row_09876 = (u8)~z80_inp(KB_ROW_09876);
+
+    if (row_12345 & KB_BIT_4) j |= JOY_LEFT;   /* 5 */
+    if (row_09876 & KB_BIT_4) j |= JOY_DOWN;   /* 6 */
+    if (row_09876 & KB_BIT_3) j |= JOY_UP;     /* 7 */
+    if (row_09876 & KB_BIT_2) j |= JOY_RIGHT;  /* 8 */
+    if (row_09876 & KB_BIT_0) j |= JOY_FIRE;   /* 0 */
     return j;
+}
+
+static u8 read_key_s(void)
+{
+    return (u8)(((u8)~z80_inp(KB_ROW_ASDFG) & KB_BIT_1) != 0u);
+}
+
+static u8 read_key_space(void)
+{
+    return (u8)(((u8)~z80_inp(KB_ROW_SPACE) & KB_BIT_0) != 0u);
 }
 
 /* Active control scheme (CTRL_*), set from the title screen. The pure decode
@@ -233,7 +265,7 @@ void input_read(u8 facing, intent_t *out)
         u8 joy_fires;
 
         decode_move_keys(keys, &out->move_dx, &out->move_dy);
-        out->boost = in_key_pressed(IN_KEY_SCANCODE_s) ? 1u : 0u;
+        out->boost = read_key_s();
 
         joy_fires = (u8)(joy & JOY_FIRE);
 
@@ -289,7 +321,7 @@ void input_read(u8 facing, intent_t *out)
         u8 keys = read_aim_keys();
         make_intent(joy, keys, facing, out);
         /* SPACE also boosts (make_intent already sets boost from JOY_FIRE). */
-        if (in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
+        if (read_key_space()) {
             out->boost = 1;
         }
     }

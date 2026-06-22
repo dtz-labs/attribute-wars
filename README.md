@@ -10,8 +10,10 @@ The design priority is **smooth and fast** gameplay over graphical richness — 
 tradeoff favours frame-rate over colour and visual complexity. The game runs at a
 locked 50 Hz using the Timex SCLD hardware page-flip for flicker-free double buffering.
 
-> **Status:** in development. Targets the Timex TC2048 today; the TC2068/TS2068 and
-> a ZX Spectrum 128K port (with AY-3-8910 music) are designed in
+> **Status:** in development. Targets the Timex TC2048 today; **AY-3-8910 music now
+> plays on any AY-equipped machine** (ZX 128 / TS2068 / TC2068), auto-detected at
+> runtime — see [Music](#music). The full TC2068/TS2068 and ZX Spectrum 128K
+> *ports* (kernel swaps) are designed in
 > [`docs/superpowers/specs/`](docs/superpowers/specs/).
 
 ## Hardware targets
@@ -74,6 +76,22 @@ No floating point, no `malloc`, no recursion — integer math, fixed-size pools,
 precomputed tables only. Frame budget is 69,888 T-states @ 50 Hz; the enemy and
 bullet caps are tuned to stay under it (re-measure with `z88dk-ticks` before raising
 them).
+
+## Music
+
+On any machine with an AY-3-8910/8912 — ZX Spectrum 128/+2/+3, Timex TS2068/TC2068,
+or a 48K with an AY interface — the game plays **AY chiptune music**, auto-detected at
+runtime. The beeper-only TC2048 stays silent (with its beeper SFX as always); no
+machine is left worse off.
+
+The tune is **"Spectrumizer" by Pator** ([ZX-Art](https://zxart.ee/eng/authors/p/pator/spectrumizer/),
+Lost Party 2023). Pator has sadly passed away — **R.I.P., and thank you for the music.**
+
+Playback uses Sergey Bulba's Vortex Tracker II PT3 player (vendored from z88dk),
+ticked once per frame from the main loop. A small detection + port-routing layer
+(`src/music_ay.asm`) probes for the chip and supports both the 128K
+(`0xFFFD`/`0xBFFD`) and TS2068 (`0xF5`/`0xF6`) AY port schemes; the beeper SFX
+(`sfx.asm`) are untouched and mix over the music in hardware.
 
 ## License
 

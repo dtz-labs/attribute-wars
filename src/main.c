@@ -39,6 +39,7 @@
 #include "rng.h"
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
+#include "music.h"         /* AY chiptune (auto-detected; no-op without an AY)   */
 #include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
@@ -57,7 +58,8 @@
 #define PLAYER_START_Y 96u
 
 /* Visual recoil (spec §3.5): how many frames the ship draws kicked-back. */
-#define RECOIL_FRAMES 2u
+#define RECOIL_FRAMES 3u
+#define RECOIL_PIXELS 2u
 
 /* Largest u8 wave we let the difficulty index climb to. enemies_spawn() loops
  * at the wave-16 settings for anything >16, so this is only an anti-wrap guard
@@ -82,15 +84,18 @@ static u8 ps_enemy_chase[SPR_PRESHIFT_SIZE];    /* level 2 chaser  */
 static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
 /* (the HUD life-heart pre-shift table now lives in hud.c) */
 
-/* Pick the pre-shifted table for an enemy's behaviour level. */
-static const u8 *enemy_sprite(u8 level)
-{
-    if (level == ENEMY_HUNTER)   return ps_enemy_hunter;
-    if (level == ENEMY_CHASE)    return ps_enemy_chase;
-    if (level == ENEMY_BOUNCE_V) return ps_enemy_vbounce;
-    if (level == ENEMY_BOUNCE_H) return ps_enemy_hbounce;
-    return ps_enemy;
-}
+/* Pick the pre-shifted table for an enemy's behaviour level. Level 1 is unused,
+ * so it deliberately aliases the default bouncer sprite. */
+#if ENEMY_BOUNCE_H != 5
+#error "enemy_sprite_by_level assumes enemy levels 0..5; update the table"
+#endif
+static const u8 * const enemy_sprite_by_level[] = {
+    ps_enemy, ps_enemy, ps_enemy_chase, ps_enemy_hunter,
+    ps_enemy_vbounce, ps_enemy_hbounce
+};
+
+#define ENEMY_SPRITE(level_) \
+    (((level_) <= ENEMY_BOUNCE_H) ? enemy_sprite_by_level[(level_)] : ps_enemy)
 
 /* Wave time budget in frames for the active wave. Mirrors enemies_spawn()'s
  * index clamp (1-based wave; wave==0 -> wave 1; >16 loops at index 15) so the
@@ -182,28 +187,36 @@ static u8 fx_colour(u8 t)
     return ATTR(1, 2, 0);                /* red    */
 }
 
-static void fx_render(void)
+static u8 fx_render(void)
 {
+    fx_t *f = fx;
+    u8 any = 0u;
     u8 i;
-    for (i = 0; i < MAX_FX; i++) {
-        u8 colr, restore;
+    for (i = MAX_FX; i != 0u; i--, f++) {
+        u8 colr, restore, shape, cx, cy, t;
         s8 dr, dc;
-        if (fx[i].t == 0u) {
+        t = f->t;
+        if (t == 0u) {
             continue;
         }
-        fx[i].t--;
-        restore = (u8)(fx[i].t == 0u);          /* last frame -> restore bg */
-        colr    = fx_colour((u8)(fx[i].t + 1u));
+        any = 1u;
+        t--;
+        f->t = t;
+        restore = (u8)(t == 0u);                /* last frame -> restore bg */
+        colr    = fx_colour((u8)(t + 1u));
+        shape   = f->shape;
+        cx      = f->cx;
+        cy      = f->cy;
         for (dr = -1; dr <= 1; dr++) {
-            s8 row = (s8)fx[i].cy + dr;
+            s8 row = (s8)cy + dr;
             if (row < 0 || row > 23) continue;
             for (dc = -1; dc <= 1; dc++) {
-                s8 c = (s8)fx[i].cx + dc;
+                s8 c = (s8)cx + dc;
                 u8 keep;
                 if (c < 0 || c > 31) continue;
-                if (fx[i].shape == 1u) {
+                if (shape == 1u) {
                     keep = (u8)(dr == 0 || dc == 0);                 /* plus  */
-                } else if (fx[i].shape == 2u) {
+                } else if (shape == 2u) {
                     keep = (u8)((dr == 0 && dc == 0) || (dr != 0 && dc != 0)); /* X */
                 } else {
                     keep = 1u;                                       /* full  */
@@ -216,6 +229,19 @@ static void fx_render(void)
             }
         }
     }
+    return any;
+}
+
+static u8 enemies_alive_count(const enemies_t *es)
+{
+    const enemy_t *e = es->e;
+    u8 i, n = 0u;
+    for (i = MAX_ENEMIES; i != 0u; i--, e++) {
+        if (e->alive) {
+            n++;
+        }
+    }
+    return n;
 }
 
 /*
@@ -272,30 +298,16 @@ static void death_anim(u8 px, u8 py)
                 put_cell(col, row, v);
             }
         }
-        /* Scatter single BLACK pixels across the blast (the fire cells have ink 0,
-         * so a set bit shows as a black speck) -> a grainy, "chropowaty" look.
-         * Both bitmaps, since the frozen death scene doesn't page-flip. */
-        {
-            u8 k;
-            for (k = 0; k < 24u; k++) {
-                s16 ppx = (s16)((s16)cx * 8 + 4) + (((s16)rng_byte() - 128) >> 1);
-                s16 ppy = (s16)((s16)cy * 8 + 4) + (((s16)rng_byte() - 128) >> 1);
-                if (ppx >= 0 && ppx < 256 && ppy >= 0 && ppy < 192) {
-                    u8 m = (u8)(0x80u >> ((u8)ppx & 7u));
-                    u8 cb = (u8)((u8)ppx >> 3);
-                    scld_scanline(SCLD_SCREEN_A, (u8)ppy)[cb] |= m;
-                    scld_scanline(SCLD_SCREEN_B, (u8)ppy)[cb] |= m;
-                }
-            }
-        }
         /* Death explosion sound, SYNCED with the growing fireball: the scene is
          * frozen here (only the fireball attrs draw) so the frame budget is free
          * -- a loud crackle every expansion frame. */
         sfx_noise();
         sfx_noise();
         scld_wait();
+        music_tick();                                           /* keep music alive */
         if (f >= (u8)(maxR - 1u)) {
             scld_wait();                                        /* brief hold full */
+            music_tick();
         }
     }
 }
@@ -309,9 +321,11 @@ static void telegraph_blink(const enemies_t *es, u8 tk)
 {
     const enemy_t *e = es->e;
     u8 i, on = (u8)((tk & 8u) != 0u);    /* toggle every 8 frames */
-    for (i = 0; i < MAX_ENEMIES; i++, e++) {
-        u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-        put_attr(row, col, on ? ATTR(0, 2, 7) : bg_attr(row, col));  /* soft red */
+    for (i = MAX_ENEMIES; i != 0u; i--, e++) {
+        if (e->alive) {
+            u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
+            put_attr(row, col, on ? ATTR(0, 2, 7) : bg_attr(row, col));  /* soft red */
+        }
     }
 }
 
@@ -319,9 +333,11 @@ static void telegraph_clear(const enemies_t *es)
 {
     const enemy_t *e = es->e;
     u8 i;
-    for (i = 0; i < MAX_ENEMIES; i++, e++) {
-        u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-        put_attr(row, col, bg_attr(row, col));
+    for (i = MAX_ENEMIES; i != 0u; i--, e++) {
+        if (e->alive) {
+            u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
+            put_attr(row, col, bg_attr(row, col));
+        }
     }
 }
 
@@ -337,7 +353,7 @@ static void game_over_flash(void)
         memset((u8 *)SCLD_ATTRS_A, v, SCLD_ATTRS_LEN);
         memset((u8 *)SCLD_ATTRS_B, v, SCLD_ATTRS_LEN);
         d = 6;
-        while (d--) scld_wait();
+        while (d--) { scld_wait(); music_tick(); }
     }
 }
 
@@ -475,6 +491,7 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
             return 1u;                 /* fresh game */
         }
         scld_wait();
+        music_tick();                  /* music continues on the game-over screen */
     }
 }
 
@@ -548,6 +565,10 @@ static u8 title_screen(void)
     put_text(SCLD_SCREEN_A,  2, 10, "2 KEYS MOVE  KEMPSTON FIRE");
     put_text(SCLD_SCREEN_A,  2, 12, "3 TWO JOYSTICKS (TS2068)");
     put_text(SCLD_SCREEN_A,  2, 15, "0 START GAME");
+    /* Music credit + memorial. The AY tune "Spectrumizer" is by Pator, who has
+     * sadly passed away -- R.I.P. (Plays only on AY machines; the credit shows
+     * on every machine.) */
+    put_text(SCLD_SCREEN_A,  5, 18, "MUSIC: PATOR  -  R.I.P.");
     put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
     put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
 
@@ -583,6 +604,7 @@ static u8 title_screen(void)
         else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
 
         scld_wait();
+        music_tick();                  /* keep the menu tune running */
     }
     return sel;
 }
@@ -601,6 +623,8 @@ int main(void)
     u8        cooldown = 0;
     u8        tick     = 0;            /* frame counter (thruster flicker etc.)  */
     u8        invuln   = 0;            /* i-frames after a hit                    */
+    u8        bullet_count = 0;        /* active bullet slots, avoids empty scans */
+    u8        enemy_count = 0;         /* live enemies in the current wave        */
     u8        spawn_timer = TELEGRAPH_FRAMES;  /* telegraph the opening wave      */
 
     /* ---- per-wave clock (spec §5.3): counts down once enemies are active. ----
@@ -621,6 +645,8 @@ int main(void)
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
     z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
     rng_seed(0xACE1u);
+    music_init();                     /* probe AY; load+start the tune (silent  */
+                                      /* no-op on a beeper-only machine)        */
 
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
@@ -642,6 +668,7 @@ int main(void)
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
     enemies_spawn(&enemies, g.wave);
+    enemy_count = enemies_alive_count(&enemies);
     wave_total = wave_time_frames(g.wave);   /* full bar; clock starts after the
                                               * telegraph (when enemies go live) */
     wave_timer = wave_total;
@@ -671,6 +698,7 @@ int main(void)
         if (in.fire && cooldown == 0) {
             if (bullet_spawn(&bullets, player.x, player.y,
                              in.aim_dx, in.aim_dy) >= 0) {
+                bullet_count++;
                 cooldown = FIRE_COOLDOWN;
                 /* economy + sound + recoil — only on a real shot (spec §3.5/§4/§8) */
                 score_sub(&g.score, 5u);
@@ -681,7 +709,10 @@ int main(void)
                 recoil_dy    = in.aim_dy;
             }
         }
-        bullets_update(&bullets);
+        if (bullet_count) {
+            bullets_update(&bullets);
+            bullet_count = bullets_count(&bullets);
+        }
 
         if (invuln) {
             invuln--;
@@ -709,29 +740,30 @@ int main(void)
              * skip it. When bullets are live, snapshot the alive flags, run
              * collide, and only rescan for kills if it actually reported any. */
             {
-                u8 any_bullet = 0u;
-                for (i = 0; i < MAX_BULLETS; i++) {
-                    if (bullets.b[i].active) { any_bullet = 1u; break; }
-                }
-                if (any_bullet) {
-                    u8 alive_before[MAX_ENEMIES];
-                    for (i = 0; i < MAX_ENEMIES; i++) {
-                        alive_before[i] = enemies.e[i].alive;
-                    }
-                    if (collide_bullets_enemies(&bullets, &enemies)) {
+                if (bullet_count) {
+                    u8 kill_mask = 0u;
+                    u8 bit = 1u;
+                    u8 kills;
+                    kills = collide_bullets_enemies_mask(&bullets, &enemies, &kill_mask);
+                    if (kills) {
+                        enemy_t *e = enemies.e;
                         u8 scored = 0u;
-                        for (i = 0; i < MAX_ENEMIES; i++) {
-                            if (alive_before[i] && !enemies.e[i].alive) {
+                        bullet_count = (u8)(bullet_count - kills);
+                        enemy_count = (u8)(enemy_count - kills);
+                        bit = 1u;
+                        for (i = MAX_ENEMIES; i != 0u; i--, e++) {
+                            if (kill_mask & bit) {
                                 u8 xl = score_add(&g.score,
-                                          score_enemy_points(enemies.e[i].level));
+                                          score_enemy_points(e->level));
                                 g.lives = (u8)(g.lives + xl);  /* extra life(s)  */
                                 if (xl) {
                                     sfx_play(SFX_EXTRA_LIFE);
                                     hud_draw_lives(g.lives);
                                 }
-                                fx_spawn(enemies.e[i].x, enemies.e[i].y);
+                                fx_spawn(e->x, e->y);
                                 scored = 1u;
                             }
+                            bit = (u8)(bit << 1);
                         }
                         if (scored) {
                             hud_score(&g.score, 0u);           /* points landed   */
@@ -740,7 +772,7 @@ int main(void)
                 }
             }
 
-            if (!enemies_any_alive(&enemies)) {
+            if (enemy_count == 0u) {
                 /* ---- WAVE CLEARED: early-clear bonus = (seconds left)*10 (§5.3) */
                 u16 bonus = (u16)((wave_timer / 50u) * 10u);
                 if (bonus) {
@@ -759,6 +791,7 @@ int main(void)
                     g.wave++;
                 }
                 enemies_spawn(&enemies, g.wave);    /* next wave (telegraphed)    */
+                enemy_count = enemies_alive_count(&enemies);
                 wave_total = wave_time_frames(g.wave);
                 wave_timer = wave_total;
                 wave_secs  = 0xFFFFu;               /* force a timer redraw       */
@@ -802,6 +835,7 @@ int main(void)
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
                     enemies_spawn(&enemies, g.wave);  /* re-init the current wave  */
+                    enemy_count = enemies_alive_count(&enemies);
                     wave_total = wave_time_frames(g.wave);
                     wave_timer = wave_total;          /* fresh clock for the wave  */
                     wave_secs  = 0xFFFFu;
@@ -821,63 +855,79 @@ int main(void)
         back = scld_back();
         bi   = scld_back_page();
 
-        for (i = 0; i < prevn[bi]; i++) {        /* erase this buffer's last frame */
-            if (prev[bi][i].kind == KIND_BULLET) {
-                BUL_ERASE(back, prev[bi][i].x, prev[bi][i].y);
-            } else {
-                SPR_ERASE(back, prev[bi][i].x, prev[bi][i].y);
+        {                                        /* erase this buffer's last frame */
+            cell_t *p = prev[bi];
+            for (i = prevn[bi]; i != 0u; i--, p++) {
+                if (p->kind == KIND_BULLET) {
+                    BUL_ERASE(back, p->x, p->y);
+                } else {
+                    SPR_ERASE(back, p->x, p->y);
+                }
             }
         }
 
         n = 0;
-        {                                                        /* player ship  */
-            u8 fdir = (u8)((player.facing < 8u) ? player.facing : 0u); /* NONE->N */
-            if (!invuln || (tick & 2u)) {                /* blink while invuln */
-                u8 dx = player.x;
-                u8 dy = player.y;
-                /* ---- visual recoil (spec §3.5): on a recent shot, draw the ship
-                 * 1px opposite the aim (and flash a muzzle dot ahead). Player
-                 * state is untouched; we just record the drawn position so the
-                 * incremental erase still matches what landed. ---- */
-                if (recoil_timer) {
-                    s8 sx = step_sign(recoil_dx);
-                    s8 sy = step_sign(recoil_dy);
-                    /* opposite aim, clamped (x wraps as a u8; y stays 0..184). */
-                    dx = (u8)(player.x - sx);
-                    if (sy > 0 && player.y > 0u)         dy = (u8)(player.y - 1u);
-                    else if (sy < 0 && player.y < 184u)  dy = (u8)(player.y + 1u);
-                }
-                SPR_DRAW(back, dx, dy, ps_ship_dir[fdir]);
-                prev[bi][n].x = dx; prev[bi][n].y = dy;
-                prev[bi][n].kind = KIND_SPRITE; n++;
+        {
+            cell_t *out = prev[bi];
 
-                /* muzzle flash: one bright dot a cell ahead in the aim dir. */
-                if (recoil_timer && (recoil_dx || recoil_dy)) {
-                    u8 mx = (u8)(player.x + (u8)(step_sign(recoil_dx) * 8));
-                    s16 my = (s16)player.y + (s16)(step_sign(recoil_dy) * 8);
-                    if (my >= 0 && my <= 184) {
-                        BUL_DRAW(back, mx, (u8)my);
-                        prev[bi][n].x = mx; prev[bi][n].y = (u8)my;
-                        prev[bi][n].kind = KIND_BULLET; n++;
+            {                                                    /* player ship  */
+                u8 fdir = (u8)((player.facing < 8u) ? player.facing : 0u); /* NONE->N */
+                if (!invuln || (tick & 2u)) {            /* blink while invuln */
+                    u8 dx = player.x;
+                    u8 dy = player.y;
+                    /* ---- visual recoil (spec §3.5): on a recent shot, draw the ship
+                     * 1px opposite the aim (and flash a muzzle dot ahead). Player
+                     * state is untouched; we just record the drawn position so the
+                     * incremental erase still matches what landed. ---- */
+                    if (recoil_timer) {
+                        s8 sx = step_sign(recoil_dx);
+                        s8 sy = step_sign(recoil_dy);
+                        /* opposite aim; y stays 0..184, x has enough arena margin. */
+                        if (sx > 0)       dx = (u8)(player.x - RECOIL_PIXELS);
+                        else if (sx < 0)  dx = (u8)(player.x + RECOIL_PIXELS);
+                        if (sy > 0 && player.y >= RECOIL_PIXELS) {
+                            dy = (u8)(player.y - RECOIL_PIXELS);
+                        } else if (sy < 0 && player.y <= (u8)(184u - RECOIL_PIXELS)) {
+                            dy = (u8)(player.y + RECOIL_PIXELS);
+                        }
+                    }
+                    SPR_DRAW(back, dx, dy, ps_ship_dir[fdir]);
+                    out->x = dx; out->y = dy;
+                    out->kind = KIND_SPRITE; out++; n++;
+
+                    /* muzzle flash: one bright dot a cell ahead in the aim dir. */
+                    if (recoil_timer && (recoil_dx || recoil_dy)) {
+                        u8 mx = (u8)(player.x + (u8)(step_sign(recoil_dx) * 8));
+                        s16 my = (s16)player.y + (s16)(step_sign(recoil_dy) * 8);
+                        if (my >= 0 && my <= 184) {
+                            BUL_DRAW(back, mx, (u8)my);
+                            out->x = mx; out->y = (u8)my;
+                            out->kind = KIND_BULLET; out++; n++;
+                        }
                     }
                 }
             }
-        }
-        if (spawn_timer == 0u) {                                   /* enemies */
-            for (i = 0; i < MAX_ENEMIES; i++) {
-                if (enemies.e[i].alive) {
-                    SPR_DRAW(back, enemies.e[i].x, enemies.e[i].y,
-                             enemy_sprite(enemies.e[i].level));
-                    prev[bi][n].x = enemies.e[i].x; prev[bi][n].y = enemies.e[i].y;
-                    prev[bi][n].kind = KIND_SPRITE; n++;
+            if (spawn_timer == 0u) {                               /* enemies */
+                const enemy_t *e = enemies.e;
+                for (i = MAX_ENEMIES; i != 0u; i--, e++) {
+                    if (e->alive) {
+                        SPR_DRAW(back, e->x, e->y, ENEMY_SPRITE(e->level));
+                        out->x = e->x; out->y = e->y;
+                        out->kind = KIND_SPRITE; out++; n++;
+                    }
                 }
             }
-        }
-        for (i = 0; i < MAX_BULLETS; i++) {                        /* bullets (cheap) */
-            if (bullets.b[i].active) {
-                BUL_DRAW(back, bullets.b[i].x, bullets.b[i].y);
-                prev[bi][n].x = bullets.b[i].x; prev[bi][n].y = bullets.b[i].y;
-                prev[bi][n].kind = KIND_BULLET; n++;
+            {                                                       /* bullets (cheap) */
+                if (bullet_count) {
+                    const bullet_t *b = bullets.b;
+                    for (i = MAX_BULLETS; i != 0u; i--, b++) {
+                        if (b->active) {
+                            BUL_DRAW(back, b->x, b->y);
+                            out->x = b->x; out->y = b->y;
+                            out->kind = KIND_BULLET; out++; n++;
+                        }
+                    }
+                }
             }
         }
         prevn[bi] = n;
@@ -887,10 +937,12 @@ int main(void)
         /* Explosion sound SYNCED with the animation: while any hit-pop is on
          * screen, emit a short noisy crackle each frame so the whole burst is
          * audible together with the graphics. Cheap (~2.5k T, only during fx). */
-        { u8 fi; for (fi = 0; fi < MAX_FX; fi++) { if (fx[fi].t) { sfx_noise(); break; } } }
+        if (fx_render()) {              /* animate enemy-hit colour pops (attrs) */
+            sfx_noise();
+        }
 
-        fx_render();                  /* animate enemy-hit colour pops (attrs) */
-        scld_present();               /* HALT to 50 Hz, then page-flip */
+        scld_present();                 /* HALT to 50 Hz, then page-flip */
+        music_tick();                   /* advance the AY tune one frame */
     }
     /* never reached */
 }
