@@ -17,9 +17,9 @@
  *                  FIRE/SPACE resumes from the death wave, Q starts a fresh game
  *   - sound:       1-bit beeper SFX on shoot/explode/hit/death/extra-life/bonus
  *   - HUD:         lives + shields (top), score text + dash-ready dot (frame)
- *   - background:  a static attribute "shape" chosen per run (bgpat), or
- *                  re-rolled each wave in noisy mode -- painted once, zero cost
- *                  per frame
+ *   - background:  a static attribute "shape" chosen at random per run (bgpat:
+ *                  checker / stripes / circles / lattice) -- painted once,
+ *                  zero cost per frame, unchanged for the whole run
  *   - rendering:   incremental erase+redraw into the hidden buffer, page-flip
  *
  * All hardware (port 0xFF, screen/attr addresses) lives in scld.c; the loop only
@@ -116,17 +116,12 @@ static s8 step_sign(s8 v)
 }
 
 /* The per-run background lives in this RAM table (frame ring + interior). It is
- * generated once per game (or per wave in noisy mode) and block-copied into both
- * attribute blocks by bg_paint(). bg_attr() is the single source of truth that
- * fx_render() and the spawn telegraph read to restore a cell. */
+ * generated once per game and block-copied into both attribute blocks by
+ * bg_paint(). It stays static for the whole run. bg_attr() is the single source
+ * of truth that fx_render() and the spawn telegraph read to restore a cell. */
 static u8  bg_cells[BGPAT_CELLS];
-static u8  bg_mode;        /* BG_MODE_STATIC or BG_MODE_WAVE                  */
-static u8  bg_cur_id;      /* current pattern id                             */
-static u16 bg_rng = 0xC0DEu;   /* private LCG so we never perturb game rng    */
-
-#define BG_MODE_STATIC   0u
-#define BG_MODE_WAVE     1u
-#define BG_NOISY_PERCENT 50u   /* odds a run uses the per-wave noisy tier     */
+static u8  bg_cur_id = 0xFFu;   /* current pattern id (0xFF = none yet)        */
+static u16 bg_rng = 0xC0DEu;    /* private LCG so we never perturb game rng    */
 
 static u8 bg_rand(void)
 {
@@ -149,30 +144,13 @@ static void bg_paint(void)
     memcpy((u8 *)SCLD_ATTRS_B, bg_cells, SCLD_ATTRS_LEN);
 }
 
-/* Choose this run's background. ~BG_NOISY_PERCENT of runs use the noisy tier
- * (re-rolled each wave by bg_next_wave); the rest pick one low-noise shape and
- * keep it. Generates bg_cells but does NOT paint (caller paints). */
+/* Choose this run's background: one of the four shapes at random, avoiding an
+ * immediate repeat of the previous run. Static for the whole run -- no per-wave
+ * change. Generates bg_cells but does NOT paint (caller paints). */
 static void bg_new_run(void)
 {
-    if (bg_rand() < (u8)((BG_NOISY_PERCENT * 256u) / 100u)) {
-        bg_mode   = BG_MODE_WAVE;
-        bg_cur_id = bgpat_pick(BGPAT_NOISY_FIRST, BGPAT_NOISY_COUNT, 0xFFu, bg_rand());
-    } else {
-        bg_mode   = BG_MODE_STATIC;
-        bg_cur_id = bgpat_pick(BGPAT_LOWNOISE_FIRST, BGPAT_LOWNOISE_COUNT, 0xFFu, bg_rand());
-    }
-    bgpat_generate(bg_cells, bg_cur_id, bg_rng);
-}
-
-/* At a wave boundary, re-roll + repaint when in noisy mode; no-op otherwise. */
-static void bg_next_wave(void)
-{
-    if (bg_mode != BG_MODE_WAVE) {
-        return;
-    }
-    bg_cur_id = bgpat_pick(BGPAT_NOISY_FIRST, BGPAT_NOISY_COUNT, bg_cur_id, bg_rand());
-    bgpat_generate(bg_cells, bg_cur_id, bg_rng);
-    bg_paint();
+    bg_cur_id = bgpat_pick(0u, BGPAT_COUNT, bg_cur_id, bg_rand());
+    bgpat_generate(bg_cells, bg_cur_id);
 }
 
 /* ---- enemy-hit explosions: brief colour pops, NO game freeze ----
@@ -789,7 +767,6 @@ int main(void)
                     g.wave++;
                 }
                 enemies_spawn(&enemies, g.wave);    /* next wave (telegraphed)    */
-                bg_next_wave();                     /* noisy mode: new shape this wave */
                 wave_total = wave_time_frames(g.wave);
                 wave_timer = wave_total;
                 wave_secs  = 0xFFFFu;               /* force a timer redraw       */

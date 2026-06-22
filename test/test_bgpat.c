@@ -21,7 +21,7 @@ static void check_invariants(u8 id)
     int ink_ok = 1, paper_ok = 1, frame_ok = 1, filled_ok = 1;
 
     memset(cells, 0xAAu, sizeof cells);            /* sentinel: detect unwritten */
-    bgpat_generate(cells, id, 0x1234u);
+    bgpat_generate(cells, id);
 
     for (r = 0; r < BGPAT_ROWS; r++) {
         for (c = 0; c < BGPAT_COLS; c++) {
@@ -46,41 +46,41 @@ int main(void)
     u8 id;
     for (id = 0; id < IMPL; id++) check_invariants(id);
 
-    /* Noisy patterns must not be identical to the checker fallback. */
+    /* Each shape must be visually distinct from the checker. */
     {
-        static u8 ck[BGPAT_CELLS], nz[BGPAT_CELLS];
+        static u8 ck[BGPAT_CELLS], other[BGPAT_CELLS];
         char nm[48];
-        bgpat_generate(ck, BGPAT_CHECKER, 0x55u);
-        for (id = BGPAT_NOISY_FIRST; id < BGPAT_NOISY_FIRST + BGPAT_NOISY_COUNT; id++) {
-            bgpat_generate(nz, id, 0x55u);
-            sprintf(nm, "noisy id %u differs from checker", id);
-            check(nm, memcmp(ck, nz, sizeof ck) != 0);
+        bgpat_generate(ck, BGPAT_CHECKER);
+        for (id = BGPAT_DIAGONAL; id < BGPAT_COUNT; id++) {
+            bgpat_generate(other, id);
+            sprintf(nm, "id %u differs from checker", id);
+            check(nm, memcmp(ck, other, sizeof ck) != 0);
         }
     }
 
     /* bgpat_pick stays in range and avoids the previous id. */
     {
-        u8 rnd, prev, id; int in_range = 1, no_repeat = 1;
-        for (prev = BGPAT_NOISY_FIRST; prev < BGPAT_NOISY_FIRST + BGPAT_NOISY_COUNT; prev++) {
+        u8 rnd, prev, id2; int in_range = 1, no_repeat = 1;
+        for (prev = 0; prev < BGPAT_COUNT; prev++) {
             for (rnd = 0; rnd < 255u; rnd++) {
-                id = bgpat_pick(BGPAT_NOISY_FIRST, BGPAT_NOISY_COUNT, prev, rnd);
-                if (id < BGPAT_NOISY_FIRST || id >= BGPAT_NOISY_FIRST + BGPAT_NOISY_COUNT) in_range = 0;
-                if (id == prev) no_repeat = 0;
+                id2 = bgpat_pick(0u, BGPAT_COUNT, prev, rnd);
+                if (id2 >= BGPAT_COUNT) in_range = 0;
+                if (id2 == prev) no_repeat = 0;
             }
         }
-        check("pick stays in tier range", in_range);
+        check("pick stays in range", in_range);
         check("pick avoids immediate repeat", no_repeat);
         /* prev=0xFF allows any id in range. */
         check("pick with prev=0xFF in range",
-              bgpat_pick(BGPAT_LOWNOISE_FIRST, BGPAT_LOWNOISE_COUNT, 0xFFu, 200u) < BGPAT_LOWNOISE_COUNT);
+              bgpat_pick(0u, BGPAT_COUNT, 0xFFu, 200u) < BGPAT_COUNT);
     }
 
-    /* Determinism: same (id, seed) -> identical buffer. */
+    /* Determinism: same id -> identical buffer. */
     {
         static u8 a[BGPAT_CELLS], b[BGPAT_CELLS];
-        bgpat_generate(a, BGPAT_CHECKER, 0x9999u);
-        bgpat_generate(b, BGPAT_CHECKER, 0x9999u);
-        check("deterministic for (id,seed)", memcmp(a, b, sizeof a) == 0);
+        bgpat_generate(a, BGPAT_CHECKER);
+        bgpat_generate(b, BGPAT_CHECKER);
+        check("deterministic for id", memcmp(a, b, sizeof a) == 0);
     }
 
     if (failures == 0) { printf("test_bgpat: ALL PASS\n"); return 0; }

@@ -23,7 +23,7 @@ mkdir -p build
 zcc +zx -SO3 -clib=sdcc_iy -iquote"$ROOT/include" \
     src/main.c src/scld.c src/sprite.c src/sprites.c src/player.c \
     src/bullet.c src/enemy.c src/collision.c src/geometry.c src/input.c \
-    src/rng.c src/score.c src/sfx.c src/hud.c src/bgpat.c src/fxtab.c \
+    src/rng.c src/score.c src/sfx.c src/hud.c src/bgpat.c \
     src/blit.asm src/enemy_update.asm src/collide.asm src/sfx.asm \
     -o build/game -create-app
 
