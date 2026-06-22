@@ -39,6 +39,7 @@
 #include "rng.h"
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
+#include "music.h"         /* AY chiptune (auto-detected; no-op without an AY)   */
 #include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
@@ -294,8 +295,10 @@ static void death_anim(u8 px, u8 py)
         sfx_noise();
         sfx_noise();
         scld_wait();
+        music_tick();                                           /* keep music alive */
         if (f >= (u8)(maxR - 1u)) {
             scld_wait();                                        /* brief hold full */
+            music_tick();
         }
     }
 }
@@ -337,7 +340,7 @@ static void game_over_flash(void)
         memset((u8 *)SCLD_ATTRS_A, v, SCLD_ATTRS_LEN);
         memset((u8 *)SCLD_ATTRS_B, v, SCLD_ATTRS_LEN);
         d = 6;
-        while (d--) scld_wait();
+        while (d--) { scld_wait(); music_tick(); }
     }
 }
 
@@ -475,6 +478,7 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
             return 1u;                 /* fresh game */
         }
         scld_wait();
+        music_tick();                  /* music continues on the game-over screen */
     }
 }
 
@@ -548,6 +552,10 @@ static u8 title_screen(void)
     put_text(SCLD_SCREEN_A,  2, 10, "2 KEYS MOVE  KEMPSTON FIRE");
     put_text(SCLD_SCREEN_A,  2, 12, "3 TWO JOYSTICKS (TS2068)");
     put_text(SCLD_SCREEN_A,  2, 15, "0 START GAME");
+    /* Music credit + memorial. The AY tune "Spectrumizer" is by Pator, who has
+     * sadly passed away -- R.I.P. (Plays only on AY machines; the credit shows
+     * on every machine.) */
+    put_text(SCLD_SCREEN_A,  5, 18, "MUSIC: PATOR  -  R.I.P.");
     put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
     put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
 
@@ -583,6 +591,7 @@ static u8 title_screen(void)
         else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
 
         scld_wait();
+        music_tick();                  /* keep the menu tune running */
     }
     return sel;
 }
@@ -621,6 +630,8 @@ int main(void)
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
     z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
     rng_seed(0xACE1u);
+    music_init();                     /* probe AY; load+start the tune (silent  */
+                                      /* no-op on a beeper-only machine)        */
 
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
@@ -891,6 +902,7 @@ int main(void)
 
         fx_render();                  /* animate enemy-hit colour pops (attrs) */
         scld_present();               /* HALT to 50 Hz, then page-flip */
+        music_tick();                 /* advance the AY tune one frame */
     }
     /* never reached */
 }

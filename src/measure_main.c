@@ -32,6 +32,12 @@ void markA(void) { z80_outp(0xFEu, 2u); }   /* + enemies_update x N    */
 void markB(void) { z80_outp(0xFEu, 3u); }   /* + collide x N           */
 void markC(void) { z80_outp(0xFEu, 4u); }   /* + player_hit x N        */
 void mark2(void) { z80_outp(0xFEu, 5u); }   /* + render x N            */
+void mark3(void) { z80_outp(0xFEu, 6u); }   /* + music_tick (PT3) x N  */
+
+/* music_ay.asm: drive the vendored PT3 player directly (no AY needed to compute
+ * a frame — the override just OUTs to an undecoded port under z88dk-ticks). */
+extern void pt3_init(void);
+extern void pt3_play_safe(void);
 
 /* Keep the pools full so no function triggers a respawn (which would pull in
  * rng and skew the numbers). 6 alive, 2 active -- the steady state. */
@@ -92,6 +98,13 @@ int main(void)
     }
 
     mark2();
+
+    pt3_init();                              /* load the tune + reset to start */
+    for (k = 0; k < ITERS; k++) {            /* ---- music_tick (PT3 player) ---- */
+        pt3_play_safe();
+    }
+    mark3();
+
     z80_outp(0xFEu, 0u);
     for (;;) { }                             /* trap */
 }
