@@ -26,14 +26,14 @@
 #include "controls.h"
 #include "arena.h"
 #include "rng.h"
+#include "score.h"
+#include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
-#include <string.h>       /* memset (HUD + game-over fills) */
+#include <string.h>       /* memset (game-over fills) */
 #include <input.h>        /* in_key_pressed + IN_KEY_SCANCODE_* (title menu) */
 
 #define INVULN_FRAMES 50u /* ~1s of i-frames after a hit (ship blinks)         */
-#define START_LIVES   3u
-#define START_SHIELDS 3u
 
 /* Max objects drawn in one frame: player + enemies + bullets. */
 #define MAX_DRAW (1u + MAX_ENEMIES + MAX_BULLETS)
@@ -41,8 +41,8 @@
 /* Frames between shots — keeps the bullet/sprite load inside the ~50 Hz budget. */
 #define FIRE_COOLDOWN 8u
 
-/* Attribute byte: FLASH(7) BRIGHT(6) PAPER(5-3) INK(2-0). */
-#define ATTR(bright, paper, ink) ((u8)(((bright) << 6) | ((paper) << 3) | (ink)))
+/* Placeholder full timer bar until Task 8 wires the real wave clock. */
+#define HUD_TIMER_PLACEHOLDER 1500u
 
 #define PLAYER_START_X 128u
 #define PLAYER_START_Y 96u
@@ -61,7 +61,7 @@ static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
 static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer */
 static u8 ps_enemy_chase[SPR_PRESHIFT_SIZE];    /* level 2 chaser  */
 static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
-static u8 ps_heart[SPR_PRESHIFT_SIZE];          /* HUD life heart  */
+/* (the HUD life-heart pre-shift table now lives in hud.c) */
 
 /* Pick the pre-shifted table for an enemy's behaviour level. */
 static const u8 *enemy_sprite(u8 level)
@@ -71,44 +71,11 @@ static const u8 *enemy_sprite(u8 level)
     return ps_enemy;
 }
 
-/* Background attribute for one cell: a bright-magenta wall frame around a
- * blue/black checker floor (white ink so sprites read on every cell). Used both
- * to paint the whole arena and to RESTORE a cell after an explosion effect. */
-static u8 bg_attr(u8 row, u8 col)
-{
-    if (row == 0u || row == 23u || col == 0u || col == 31u) {
-        return ATTR(1, 3, 0);          /* WALL: bright magenta */
-    }
-    if ((u8)((row + col) & 1u)) {
-        return ATTR(0, 1, 7);          /* dark blue checker */
-    }
-    return ATTR(0, 0, 7);              /* black checker */
-}
-
-/* Paint the whole arena into BOTH attribute blocks (identical on both screens,
- * so the page-flip never disturbs colour). */
-static void bg_paint(void)
-{
-    u8 *a = (u8 *)SCLD_ATTRS_A;
-    u8 *b = (u8 *)SCLD_ATTRS_B;
-    u8  row, col;
-    u16 i = 0;
-    for (row = 0; row < 24u; row++) {
-        for (col = 0; col < 32u; col++, i++) {
-            u8 v = bg_attr(row, col);
-            a[i] = v;
-            b[i] = v;
-        }
-    }
-}
-
-/* Write one attribute cell to both blocks (shows on whichever is flipped in). */
-static void put_attr(u8 row, u8 col, u8 v)
-{
-    u16 i = (u16)row * 32u + (u16)col;
-    ((u8 *)SCLD_ATTRS_A)[i] = v;
-    ((u8 *)SCLD_ATTRS_B)[i] = v;
-}
+/* Background colour, page-flip helper, and the ATTR macro now live in hud.c /
+ * hud.h: score_cell_attr() replaces bg_attr() (the score is rendered as big
+ * attribute digits behind the action) and hud_paint_background() replaces
+ * bg_paint(). put_attr() is shared from hud.c so the fx/death/telegraph paths
+ * still write both attribute blocks. */
 
 /* ---- enemy-hit explosions: brief colour pops, NO game freeze ----
  * A small pool of timed attribute bursts. An enemy death spawns one at its cell;
@@ -177,7 +144,7 @@ static void fx_render(void)
                     continue;
                 }
                 put_attr((u8)row, (u8)c,
-                         restore ? bg_attr((u8)row, (u8)c) : colr);
+                         restore ? score_cell_attr((u8)row, (u8)c) : colr);
             }
         }
     }
@@ -186,7 +153,7 @@ static void fx_render(void)
 /*
  * Death animation: a fast attribute KABOOM. The scene freezes on the displayed
  * buffer; one of three random styles plays, painting only the cells it needs
- * (cheap/snappy). Caller restores the arena afterwards (bg_paint).
+ * (cheap/snappy). Caller restores the arena afterwards (hud_paint_background).
  */
 /* Paint one attribute cell, clipped to the grid. */
 static void put_cell(s8 col, s8 row, u8 v)
@@ -255,7 +222,7 @@ static void telegraph_blink(const enemies_t *es, u8 tk)
     u8 i, on = (u8)((tk & 8u) != 0u);    /* toggle every 8 frames */
     for (i = 0; i < MAX_ENEMIES; i++, e++) {
         u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-        put_attr(row, col, on ? ATTR(0, 2, 7) : bg_attr(row, col));  /* soft red */
+        put_attr(row, col, on ? ATTR(0, 2, 7) : score_cell_attr(row, col));  /* soft red */
     }
 }
 
@@ -265,34 +232,12 @@ static void telegraph_clear(const enemies_t *es)
     u8 i;
     for (i = 0; i < MAX_ENEMIES; i++, e++) {
         u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-        put_attr(row, col, bg_attr(row, col));
+        put_attr(row, col, score_cell_attr(row, col));
     }
 }
 
-/*
- * HUD painted into the top wall border (the magenta frame row, y 0..7): lives as
- * little ship icons on the left, shields as dots on the right. Drawn into BOTH
- * bitmaps; the game render never touches y<8, so it persists until redrawn.
- * Redraw whenever lives/shields change or after a full clear.
- */
-static void hud_draw(u8 lives, u8 shields)
-{
-    u8 r, i;
-    for (r = 0; r < 8u; r++) {            /* clear the top border bitmap strip */
-        memset(scld_scanline(SCLD_SCREEN_A, r), 0, SCLD_ROW_BYTES);
-        memset(scld_scanline(SCLD_SCREEN_B, r), 0, SCLD_ROW_BYTES);
-    }
-    for (i = 0; i < lives && i < 8u; i++) {           /* lives: small hearts */
-        u8 x = (u8)(8u + i * 8u);
-        spr_draw(SCLD_SCREEN_A, x, 0, ps_heart);
-        spr_draw(SCLD_SCREEN_B, x, 0, ps_heart);
-    }
-    for (i = 0; i < shields && i < 8u; i++) {         /* shields: dots */
-        u8 x = (u8)(240u - i * 8u);
-        bul_draw(SCLD_SCREEN_A, x, 2);
-        bul_draw(SCLD_SCREEN_B, x, 2);
-    }
-}
+/* The top-border lives/shields HUD now lives in hud.c
+ * (hud_draw_lives / hud_draw_shields). */
 
 /* Whole-screen red/white flash on GAME OVER (attributes only). */
 static void game_over_flash(void)
@@ -382,6 +327,10 @@ int main(void)
     bullets_t bullets;
     enemies_t enemies;
     intent_t  in;
+    /* Placeholder score: this milestone has no scoring yet (Task 8 wires the
+     * real economy). It exists so the HUD has digits to render as the
+     * big-attribute-digit background. */
+    static score_t hud_score;
     u8        i;
     u8        cooldown = 0;
     u16       kills    = 0;            /* total enemies destroyed (drives waves) */
@@ -399,19 +348,24 @@ int main(void)
     spr_preshift(ps_enemy,        spr_enemy);   /* build pre-shifted tables once */
     spr_preshift(ps_enemy_chase,  spr_enemy_chase);
     spr_preshift(ps_enemy_hunter, spr_enemy_hunter);
-    spr_preshift(ps_heart,        spr_heart);
+    hud_init();                                  /* build the HUD heart sprite */
 
     /* Title + control-scheme menu; the choice drives input_read() all game. */
     input_set_scheme(title_screen());
 
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
-    bg_paint();                       /* colour both attribute blocks once      */
+    score_reset(&hud_score);          /* zero the placeholder score             */
+    hud_paint_background(&hud_score); /* paint score-digit bg into both blocks  */
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
     enemies_spawn(&enemies, 1u);  /* TODO Task 8: wire real wave number */
-    hud_draw(lives, shields);
+    hud_invalidate();                 /* force first widget paint               */
+    hud_draw_lives(lives);
+    hud_draw_shields(shields);
+    hud_draw_timer(HUD_TIMER_PLACEHOLDER, HUD_TIMER_PLACEHOLDER);  /* full bar  */
+    hud_draw_boost(player.boost_energy);
     prevn[0] = 0;
     prevn[1] = 0;
 
@@ -471,7 +425,7 @@ int main(void)
                 if (shields > 0u) {
                     shields--;                       /* a shield absorbs it */
                     invuln = INVULN_FRAMES;
-                    hud_draw(lives, shields);
+                    hud_draw_shields(shields);
                 } else {
                     death_anim(player.x, player.y);  /* shields gone -> KABOOM */
                     scld_clear(SCLD_SCREEN_A);
@@ -487,13 +441,17 @@ int main(void)
                     } else {
                         shields = START_SHIELDS;      /* new life, full shields */
                     }
-                    bg_paint();
+                    hud_paint_background(&hud_score);  /* repaint score-digit bg */
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
                     enemies_spawn(&enemies, 1u);      /* TODO Task 8: wire real wave */
                     spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn */
-                    hud_draw(lives, shields);
+                    hud_invalidate();                 /* bitmaps + bars were wiped */
+                    hud_draw_lives(lives);
+                    hud_draw_shields(shields);
+                    hud_draw_timer(HUD_TIMER_PLACEHOLDER, HUD_TIMER_PLACEHOLDER);
+                    hud_draw_boost(player.boost_energy);
                     cooldown = 0;
                     invuln = INVULN_FRAMES;
                 }
@@ -540,6 +498,7 @@ int main(void)
         }
         prevn[bi] = n;
 
+        hud_draw_boost(player.boost_energy);  /* cheap: cached, redraw on change */
         fx_render();                  /* animate enemy-hit colour pops (attrs) */
         scld_present();               /* HALT to 50 Hz, then page-flip */
     }
