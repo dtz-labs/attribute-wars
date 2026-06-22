@@ -18,6 +18,7 @@
 #define SCLD_PORT   0xFFu     /* SCLD display-mode register                  */
 #define SCLD_PAGE_A 0x00u     /* show screen A (bits 6-7 = 0)                */
 #define SCLD_PAGE_B 0x01u     /* show screen B (bits 6-7 = 0)                */
+#define SCLD_MODE_HICOLOR 0x02u  /* bit 1: 8x1 colour, bitmap 0x4000 + attrs 0x6000 */
 
 /* Currently displayed page: 0 = screen A, 1 = screen B. */
 static uint8_t scld_front;
@@ -84,4 +85,16 @@ void scld_present(void)
 void scld_wait(void)
 {
     intrinsic_halt();                   /* one frame, no flip */
+}
+
+void scld_hicolor_on(void)
+{
+    /* bitmap 0x4000 + 8x1 attribute map at 0x6000; bits 6-7 stay 0. */
+    z80_outp(SCLD_PORT, SCLD_MODE_HICOLOR);
+}
+
+void scld_hicolor_off(void)
+{
+    /* back to standard mode showing the current double-buffer page. */
+    z80_outp(SCLD_PORT, scld_front);
 }

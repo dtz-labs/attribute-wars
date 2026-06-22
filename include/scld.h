@@ -156,4 +156,16 @@ extern void     scld_wait(void);
  * (clear only what moved). The designated hand-asm optimisation target. */
 extern void     scld_clear(uint16_t base);
 
+/* ---------------------------------------------------------------------------
+ * Timex 8x1 HI-COLOUR mode (per-scanline attributes). OUT (0xFF), 0x02 keeps
+ * the bitmap at 0x4000 but takes attributes from an 8x1 map at 0x6000 (one byte
+ * per char-column per scanline, addressed with scld_scanline(0x6000, y)[x]).
+ * This consumes the second screen file, so it CANNOT coexist with the page-flip
+ * double buffer -- use it only on a single-buffered screen (e.g. game-over).
+ * scld_hicolor_off() restores the standard double-buffer display.
+ * Only bit 1 is set; bits 6-7 stay 0 (never the interrupt kill-switch).
+ * ------------------------------------------------------------------------- */
+extern void     scld_hicolor_on(void);
+extern void     scld_hicolor_off(void);
+
 #endif /* SCLD_DOUBLE_BUFFER_H */
