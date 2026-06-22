@@ -9,11 +9,12 @@
 Add visual life to the backgrounds without compromising the project's first
 priority — SMOOTH and FAST 50 Hz gameplay. Three independent pieces:
 
-- **Menu / title:** a rotating 3D vector globe behind the title + menu.
-- **Game-over screen:** a flowing attribute plasma.
-- **In-game arena:** a *static* attribute "shape" chosen per run (replacing the
-  one fixed blue/black checker), plus an optional tier of busier shapes that
-  re-roll every wave.
+- **Menu / title:** a rotating 3D "planet" globe behind the title + menu
+  (standard double-buffer + 8×8 colour bands).
+- **Game-over screen:** a flowing plasma in Timex hi-color 8×1, with an
+  automatic standard-8×8 fallback for 128K/48K.
+- **In-game arena:** a *static* attribute "shape" chosen at random per run
+  (checker/diagonal/circles/lattice), replacing the one fixed blue/black checker.
 
 The in-game arena is the one place with no spare frame budget, so its effect is
 deliberately **static** — painted once, then untouched — costing **zero
@@ -83,23 +84,25 @@ rest. This is why the in-game effect must be static (zero per-frame cost).
 
 ## 3. Architecture
 
-Two new pure-logic modules (host-testable, integer-only, no hardware) plus
-target-only integration in `main.c`.
+Pure-logic modules (host-testable, integer-only, no hardware) plus target-only
+integration at the per-screen draw sites and the `scld.c` hardware boundary.
 
-- **`fxtab`** (`include/fxtab.h`, `src/fxtab.c`) — a 256-entry signed sine table
-  (amplitude ±127) and an 8-bit fixed-point multiply helper
-  (`s16 fx_mul(s8 a, u8 b)` style, `(a*b)>>shift`). Shared by the plasma field
-  and the globe rotation.
-- **`bgpat`** (`include/bgpat.h`, `src/bgpat.c`) — fills a 768-byte attribute
-  table for a given pattern id + seed.
+- **`bgpat`** (`include/bgpat.h`, `src/bgpat.c`) — *Phase 1, done.* Fills a
+  768-byte attribute table for a given pattern id (no seed; deterministic).
+- **`fxtab`** (`include/fxtab.h`, `src/fxtab.c`) — *Phase 2.* A 256-entry signed
+  sine table (±127, baked) and `s16 fx_mul(s8 s, u8 mag) = (s*mag)>>7`. Shared by
+  the plasma field (§5) and the globe rotation (§6).
+- **plasma field** (`plasma_attr`, Phase 2) and **globe projection** (Phase 3) —
+  pure helpers, host-tested, hardware-agnostic.
 
-**Refactor:** move the `ATTR(bright,paper,ink)` macro from `hud.h` to `types.h`
-(its natural home) so the pure modules and host tests use it without depending
-on the HUD. `hud.h` includes it from `types.h` for source compatibility.
+**Hardware boundary:** `scld.c` remains the only owner of port `0xFF` and the
+screen addresses. Phase 2 extends it with `scld_hicolor_on/off` (bit 1 only).
+Per-screen rendering (arena `bg_paint`, `game_over_screen` plasma, `title_screen`
+globe) lives target-side and draws through the abstracted buffer interface.
 
-Layering follows the existing split in CLAUDE.md: `fxtab` and `bgpat` join the
-pure-logic, host-tested tier; the per-screen draw/animation lives in `main.c`
-(target-only).
+**Refactor (done, Phase 1):** the `ATTR(bright,paper,ink)` macro moved from
+`hud.h` to `types.h` so the pure modules and host tests use it without depending
+on the HUD; `hud.h` includes it from `types.h`.
 
 ## 4. Component A — in-game backgrounds (Phase 1)
 
@@ -199,69 +202,138 @@ editing):**
 
 ## 5. Component B — game-over plasma (Phase 2)
 
-`game_over_screen` already draws white-ink text, sets attributes, and idles
-waiting for input. Add per-frame animation:
+A flowing plasma behind the GAME OVER text, rendered in **Timex hi-color 8×1**
+for smooth per-scanline colour, with an automatic **standard-8×8 fallback** so
+the same binary looks right on 128K/48K too (see §6.5 portability).
 
-- Advance a `phase` counter each frame.
-- For each cell compute an `fxtab` plasma field:
-  `v = sin[(c*kx + phase) & 255] + sin[(r*ky + phase2) & 255] + sin[((r+c)*kd +
-  phase3) & 255]`, map `v` to a paper colour (palette cycling).
-- Write the attribute block(s). Text stays white-ink → readable over any paper
-  (white paper excluded). No sprites here, so the **full** paper palette and
-  `bright` may be used.
+### `fxtab` (returns in this phase)
+`include/fxtab.h` / `src/fxtab.c`: `extern const s8 fx_sin[256]` (one period,
+±127, baked table — no runtime trig) + `s16 fx_mul(s8 s, u8 mag)` = `(s*mag)>>7`.
+Host-tested (`test/test_fxtab.c`). Shared with the globe (§6). (This is the
+module removed from Phase 1; reintroduce it here with its real consumers.)
 
-Reuses the same field function as the frozen-plasma pattern (§4). Loop is
-otherwise idle; the per-frame cost (compute ~30k + copy) fits a frame, but
-**measure** and drop to 25 Hz (animate every other frame) if needed — plasma at
-25 Hz looks fine.
+### `scld.c` hi-color extension (the hardware boundary owns the mode)
+- `void scld_hicolor_on(void)` — `OUT (0xFF), 0x02` (bit 1 ONLY; bits 6–7 stay 0,
+  so the interrupt kill-switch is never touched). Now the display is bitmap
+  `0x4000` + an **8×1 attribute map at `0x6000`** (6144 bytes, one attr per
+  char-column per scanline).
+- `void scld_hicolor_off(void)` — restore the standard double-buffer page
+  (`OUT (0xFF), scld_front`).
+- The 8×1 attr map reuses the existing interleaved addressing: the attribute for
+  column `x`, scanline `y` is at `scld_scanline(0x6000, y)[x]` — no new address
+  math. (Smoke-test this in ZEsarUX as the FIRST implementation step: fill
+  `0x6000` with a vertical colour gradient under hi-color and eyeball it, to
+  de-risk the mode before building the plasma on it.)
+
+### Plasma field (pure, host-tested)
+`u8 plasma_attr(u8 x, u8 y, u8 phase)` → an attribute byte. Field:
+`v = fx_sin[(x*KX + phase)&255] + fx_sin[(y*KY + phase)&255] +
+     fx_sin[((x+y)*KD + phase2)&255]`, mapped to a full-rainbow palette
+(paper cycles through the colours; `bright` may vary). **Ink stays white (7)** so
+the GAME OVER / SCORE text reads over any paper; **white paper is excluded**.
+Deterministic for `(x,y,phase)`.
+
+### Dual-plane render + auto-degradation (no hardware detection)
+One per-frame loop writes BOTH attribute planes from the same field:
+- **8×1 hi-color** at `0x6000` — the field per scanline (the smooth version).
+- **8×8 standard** at `0x5800` — emitted on every 8th scanline (one cell row),
+  piggybacked on the same loop, so it is nearly free.
+
+Then `scld_hicolor_on()`. On a **Timex** the SCLD displays the 8×1 plane
+(smooth); on a **128K/48K** `OUT (0xFF)` is ignored, so the ULA keeps showing the
+standard 8×8 plane (chunky). Same binary, correct look on every machine, **zero
+detection, no dead code** — each plane is the live one on its hardware.
+
+### Flow
+`game_over_screen`: clear + draw text into the `0x4000` bitmap once →
+`scld_hicolor_on()` → idle input loop, each frame advance `phase` and write both
+planes, HALT-paced → on FIRE/Q, `scld_hicolor_off()` and return; the caller
+resumes standard mode (`scld_clear` + `bg_paint`). 6144 cells is 8× the work —
+**measure**; run at 25 Hz (every other frame) if 50 Hz doesn't fit.
+
+### Tests
+- `plasma_attr` (host): output range/validity, determinism, and the text-safety
+  invariant (ink stays 7, paper never 7) across a sweep of `(x,y,phase)`.
+- The two renderers + hi-color mode are target-only → ZEsarUX visual verify.
 
 ## 6. Component C — title rotating globe (Phase 3, largest)
+
+A rotating 3D "planet": a white dot/wireframe sphere spun in **standard
+double-buffer** mode (flawless motion) over **8×8 attribute colour bands**
+(latitude gradient) that make it read as a shaded planet.
 
 ### Layout reflow
 Title screen becomes: **title text (row 3) · rotating globe (centre band) ·
 control menu + copyright (bottom)**. The globe occupies an exclusive middle band
-so it never overlaps text. (Optional: mock the layout in the visual companion
-before building.)
+so it never overlaps text.
 
-### Math (no FP)
+### Colour bands (8×8, standard attrs)
+Horizontal latitude bands over the globe's bounding cells (e.g. top→bottom
+white → cyan → blue → magenta → blue → cyan → white), written into **both**
+attribute blocks once (so the page-flip never disturbs colour). Dots are white
+ink → they show white over the band paper; the bands give the planet its shading.
+
+### Math (no FP, host-tested)
 - Precompute unit-sphere points (lat/long grid), ~120–180 points, as fixed-point
-  coordinates. For each point precompute its xz-plane radius scaled by display
-  radius (`r_xz·R`), its base-angle index (0–255), and its constant screen-y.
-- Rotation is about the Y axis only. Per frame, per point: screen-x needs **one**
-  `fx_mul` with `fx_sin`/cos indexed by `(base_angle + theta) & 255`; back-face
-  cull is just the sign of the table entry (free).
-- Plot front points brighter; cull or dim back points.
+  coordinates. Per point precompute its xz-plane radius scaled by display radius
+  (`r_xz·R`), its base-angle index (0–255), and its constant screen-y.
+- Rotation about the Y axis only. Per frame, per point: screen-x needs **one**
+  `fx_mul` with `fx_sin`/cos indexed by `(base_angle + theta)&255`; back-face cull
+  is just the sign of the table entry (free).
 
 ### Animation & double-buffering
-- The title currently uses screen A only (no flip). For smooth animation,
-  double-buffer it: paint static text/menu/shine into **both** buffers once,
-  then each frame draw the globe into the back buffer and `scld_present()`.
+- The title currently uses screen A only (no flip). Double-buffer it: paint
+  static text/menu/shine into **both** buffers once, then each frame draw the
+  globe into the back buffer and `scld_present()`. Because the globe draws via the
+  abstracted `scld_back()/scld_present()`, it rides a future 128K shadow-screen
+  kernel unchanged (see §6.5).
 - **Incremental erase:** store the pixel addresses plotted last frame and clear
-  just those next frame (the same technique the game loop uses), not the whole
-  bounding box.
-- Menu highlight + shine-sweep attribute writes must target both attribute
+  just those next frame (the game loop's technique), not the whole bounding box.
+- Menu highlight + shine-sweep attribute writes must target **both** attribute
   blocks once they animate under a flipping title.
 
 ### Cost
-This is the one piece whose per-frame cost needs its own `z88dk-ticks` check
-during implementation. Target 50 Hz; fall back to 25 Hz (every other frame) if
-the point budget can't hold it — fine for a slow spin.
+Needs its own `z88dk-ticks` check during implementation. Target 50 Hz; fall back
+to 25 Hz (every other frame) if the point budget can't hold it — fine for a slow
+spin.
+
+### Tests
+- Globe projection (host): rotation determinism, projected points stay within the
+  globe bounding box, front/back cull matches the table sign.
+- The blit + title rework are target-only → ZEsarUX visual verify.
+
+## 6.5 Portability (Timex / 128K / 48K)
+
+The repo's `2026-06-22-zx128-port-design.md` plans a 128K port by swapping the
+screen kernel behind the existing `scld_back/present/wait/init` interface
+(128K double-buffers via the shadow screen, bit 3 of `0x7FFD`; it has **no SCLD,
+no hi-color, no `OUT 0xFF`**).
+
+- **Globe — portable.** It uses the abstracted double-buffer + standard 8×8
+  attributes (which every target has), so it works on Timex now and on 128K once
+  that kernel lands (48K: single-buffer, flickery). No globe-specific 128K work.
+- **Plasma — auto-degrades.** Hi-color 8×1 is SCLD-exclusive, but the dual-plane
+  write (§5) means the standard 8×8 plane is the live one on 128K/48K
+  automatically. The plasma *field* is pure/portable; only the smooth 8×1
+  rendering is Timex-specific, and it falls back without detection.
 
 ## 7. Build phasing
 
-1. **Phase 1** — `fxtab` + `bgpat` + in-game integration + host tests.
-   Cheapest, highest value, fully host-testable. Ships the per-run / per-wave
-   arena backgrounds.
-2. **Phase 2** — game-over plasma (reuses `fxtab` plasma field).
-3. **Phase 3** — title globe (title double-buffer rework + fixed-point 3D).
+1. **Phase 1 — DONE.** `bgpat` + in-game integration + host tests. Ships the
+   four static per-run arena shapes (checker/diagonal/circles/lattice). `fxtab`
+   was *not* needed here and was removed (see §4 amendment).
+2. **Phase 2** — game-over plasma: reintroduce `fxtab`, add the `scld.c`
+   hi-color extension, the pure `plasma_attr` field, and the dual-plane renderer.
+3. **Phase 3** — title globe: title double-buffer rework + 8×8 colour bands +
+   fixed-point 3D (reuses `fxtab`).
 
 Each phase is independently shippable and verified in ZEsarUX.
 
-**Mechanical build wiring (don't forget):** register new sources `src/fxtab.c`
-and `src/bgpat.c` in `build.sh` (the `zcc … src/*.c` list, ~`build.sh:24-27`),
-and add `test/test_fxtab.c` + `test/test_bgpat.c` to `test/run.sh` (mirror the
-existing per-test compile lines). The two new modules are pure-logic and link
-cleanly host-side; `main.c` stays target-only (not host-built).
+**Mechanical build wiring (don't forget):** when reintroduced, register
+`src/fxtab.c` (Phase 2) in `build.sh` (the `zcc … src/*.c` list) and add
+`test/test_fxtab.c` + `test/test_plasma.c` (Phase 2) / `test/test_globe.c`
+(Phase 3) to `test/run.sh`. Pure-logic modules link host-side; `main.c` and
+`scld.c` stay target-only (not host-built).
 
 ## 8. Tooling
 
@@ -273,11 +345,10 @@ cleanly host-side; `main.c` stays target-only (not host-built).
 
 ## 9. Tunable parameters (collected)
 
-- `BG_NOISY_PERCENT` — odds a run uses the per-wave noisy tier (default ~50).
-- Low-noise vs noisy tier membership (`bgpat` ids).
+- `bgpat` pattern set membership (the four static shape ids). *(Phase 1, done.)*
 - Safe paper palette set.
-- Globe point count and 50 Hz/25 Hz rate.
-- Plasma 50 Hz/25 Hz rate and palette.
+- Plasma palette/theme, the `KX/KY/KD` field constants, and 50/25 Hz rate.
+- Globe point count, colour-band scheme, and 50/25 Hz rate.
 
 ## 10. Out of scope (YAGNI)
 
