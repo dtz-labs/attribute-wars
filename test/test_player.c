@@ -20,6 +20,16 @@ static intent_t mv(s8 dx, s8 dy)
     return in;
 }
 
+/* Build an intent with movement + boost. */
+static intent_t mvb(s8 dx, s8 dy, u8 b)
+{
+    intent_t in = {0, 0, 0, 0, 0, 0};
+    in.move_dx = dx;
+    in.move_dy = dy;
+    in.boost = b;
+    return in;
+}
+
 static void test_init(void)
 {
     player_t p;
@@ -96,12 +106,74 @@ static void test_diagonal_drift(void)
     CHECK(p.vx == 0 && p.vy == 0);
 }
 
+static void test_init_boost_energy(void)
+{
+    player_t p;
+    player_init(&p, 100, 80);
+    CHECK(p.boost_energy == BOOST_MAX);
+}
+
+static void test_boost_faster_and_drains(void)
+{
+    player_t p;
+    player_init(&p, 100, 80);
+    intent_t in = mvb(1, 0, 1);
+    u8 e0 = p.boost_energy;
+    u8 k;
+    for (k = 0; k < 10; k++) player_update(&p, &in);
+    CHECK(p.boost_energy < e0);                  /* energy drained */
+    CHECK(p.vx > (s16)(PLAYER_MAXV));            /* exceeds base top speed (fixed-point) */
+}
+
+static void test_boost_empty_caps_at_base(void)
+{
+    player_t p;
+    player_init(&p, 100, 80);
+    p.boost_energy = 0;
+    intent_t in = mvb(1, 0, 1);
+    u8 k;
+    for (k = 0; k < 30; k++) player_update(&p, &in);
+    CHECK(p.vx <= (s16)PLAYER_MAXV);             /* no boost without energy */
+}
+
+static void test_boost_recharge(void)
+{
+    player_t p;
+    player_init(&p, 100, 80);
+    /* Drain some energy by boosting. */
+    intent_t in = mvb(1, 0, 1);
+    u8 k;
+    for (k = 0; k < 10; k++) player_update(&p, &in);
+    u8 e_drained = p.boost_energy;
+    CHECK(e_drained < BOOST_MAX);
+    /* Release boost: energy should recharge. */
+    in = mvb(1, 0, 0);
+    for (k = 0; k < 10; k++) player_update(&p, &in);
+    CHECK(p.boost_energy > e_drained);
+}
+
+static void test_boost_recharge_cap(void)
+{
+    player_t p;
+    player_init(&p, 100, 80);
+    /* Start at full energy, hold no boost -- energy must not exceed BOOST_MAX. */
+    intent_t in = mvb(1, 0, 0);
+    u8 k;
+    for (k = 0; k < 20; k++) player_update(&p, &in);
+    CHECK(p.boost_energy <= BOOST_MAX);
+}
+
 int main(void)
 {
     test_init();
+    test_init_boost_energy();
     test_accel_and_coast();
     test_diagonal_drift();
     test_walls();
+    test_boost_faster_and_drains();
+    test_boost_empty_caps_at_base();
+    test_boost_recharge();
+    test_boost_recharge_cap();
     printf("player: %d checks passed\n", checks);
     return 0;
 }
