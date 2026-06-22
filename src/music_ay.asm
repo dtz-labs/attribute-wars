@@ -83,15 +83,38 @@ det_next:
         jr      det_next
 det_ok:
         ld      a,1
-        ret
+        jr      det_ret
 det_fail:
         xor     a
+det_ret:
+        ; Probing the TS2068 scheme touches port 0xF6, which is the ULA on a
+        ; non-TS2068 machine (border bits 0-2 + beeper bit 4). Reset the ULA so
+        ; that one-time blip leaves no visible/audible trace. (Harmless on a real
+        ; TS2068: its 0xFE ULA is separate from the 0xF5/0xF6 AY.)
+        push    af
+        xor     a
+        out     (0xFE),a                ; border black, beeper low
+        pop     af
         ret
 
-; ay_probe -- with the latched ports: R0:=0x55 read-back, then R0:=0xAA
-; read-back. A=1 if both echoed, else 0. Restores R0=0 on success.
+; ay_probe -- ROBUST presence test on the latched ports. A=1 only if a real AY
+; is there, else 0. Two independent checks:
+;   1. R1 (coarse tone A) is a 4-BIT register: writing 0xFF reads back 0x0F on a
+;      real AY, but 0xFF (or garbage) on a floating bus / ULA echo. This is the
+;      key discriminator -- it rejects the false positive that the old two-byte
+;      round-trip suffered on an emulator's floating bus (and that, on the TS2068
+;      scheme, drove the player's writes into port 0xF6 == the ULA on a TC2048).
+;   2. R0 (8-bit) must still round-trip 0x55 and 0xAA.
+; Restores R0=R1=0 on success. Clobbers A,BC.
 ay_probe:
-        ld      b,0
+        ld      b,1                     ; R1 = coarse tone A (4-bit)
+        ld      c,0xFF
+        call    sel_write
+        ld      b,1
+        call    sel_read
+        cp      0x0F                    ; real AY masks 0xFF -> 0x0F
+        jr      nz,probe_no
+        ld      b,0                     ; R0 = fine tone A (8-bit)
         ld      c,0x55
         call    sel_write
         ld      b,0
@@ -105,9 +128,12 @@ ay_probe:
         call    sel_read
         cp      0xAA
         jr      nz,probe_no
-        ld      b,0
+        ld      b,0                     ; tidy: R0=0
         ld      c,0
-        call    sel_write               ; tidy: R0=0
+        call    sel_write
+        ld      b,1                     ; tidy: R1=0
+        ld      c,0
+        call    sel_write
         ld      a,1
         ret
 probe_no:
