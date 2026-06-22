@@ -1,5 +1,5 @@
 /*
- * controls.h -- control input: Kempston move + Kempston-fire + QWEADZXC aim.
+ * controls.h -- three boost-aware control schemes for the twin-stick shooter.
  *
  * NOTE on the name: this is the project's input module interface. It is NOT
  * called "input.h" on purpose -- z88dk ships a system header <input.h>
@@ -28,10 +28,13 @@
 
 /*
  * QWEADZXC key bitmask -- one bit per key, laid out as the 3x3 grid
- * around S (which is the "no shot" centre and is intentionally absent):
+ * around S (which is unused as a shoot key in scheme A; S boosts in scheme B):
  *   Q W E      bit0 bit1 bit2
  *   A . D  ->  bit3  -   bit4
  *   Z X C      bit5 bit6 bit7
+ *
+ * X (bit6) maps to DIR_S (shoots South), not "no shot" -- decode_aim_keys(KEY_X)
+ * returns DIR_S.
  */
 #define KEY_Q 0x01  /* NW */
 #define KEY_W 0x02  /* N  */
@@ -46,16 +49,24 @@ typedef struct {
     s8  move_dx, move_dy;   /* -1/0/+1 movement axis (Kempston)              */
     s8  aim_dx,  aim_dy;    /* -1/0/+1 shot direction (keys, or facing)      */
     u8  fire;               /* non-zero if a shot is requested this frame    */
+    u8  boost;              /* non-zero while a boost input is held           */
 } intent_t;
 
 /*
  * Control schemes, chosen on the title screen. The hardware read (input_read)
  * maps each to a different pair of input sources; the resulting intent_t is
  * identical so the game loop is scheme-agnostic.
+ *
+ * Scheme A (CTRL_KEMPSTON_MOVE): Kempston (+cursor 5/6/7/8) moves; QWEADZXC
+ *   aims and fires; JOY_FIRE (incl. cursor 0) + SPACE boost.
+ * Scheme B (CTRL_KEMPSTON_FIRE): QWEADZXC moves; Kempston tilt aims+fires;
+ *   Kempston FIRE button fires in heading; S key boosts.
+ * Scheme C (CTRL_DUAL_STICK): TS2068 left stick moves + its FIRE boosts;
+ *   TS2068 right stick tilt aims+fires.
  */
-#define CTRL_KEMPSTON_MOVE 0u  /* Kempston (+cursor) moves, QWEADZXC aims/fires */
-#define CTRL_KEMPSTON_FIRE 1u  /* QWEADZXC moves, Kempston button fires (facing)*/
-#define CTRL_DUAL_STICK    2u  /* TS2068 built-in joysticks (left move/right aim)*/
+#define CTRL_KEMPSTON_MOVE 0u  /* Scheme A: Kempston move, QWEADZXC fire, JOY_FIRE+SPACE boost */
+#define CTRL_KEMPSTON_FIRE 1u  /* Scheme B: QWEADZXC move, Kempston tilt aim/fire, S boost     */
+#define CTRL_DUAL_STICK    2u  /* Scheme C: TS2068 left move+boost, right aim/fire             */
 
 /* Select the active control scheme (CTRL_*). Persists until changed. */
 void input_set_scheme(u8 scheme);
@@ -64,6 +75,13 @@ void input_set_scheme(u8 scheme);
 
 /* Decode normalised joystick byte into a -1/0/+1 movement step. */
 void decode_move(u8 joy, s8 *dx, s8 *dy);
+
+/* Scheme-B tilt-aim helper: decode a Kempston byte as an aim direction.
+ * Directional bits (UP/DOWN/LEFT/RIGHT) set out_adx/out_ady and return 1.
+ * If only JOY_FIRE is set (no tilt), out_adx/out_ady are zeroed; fire=1
+ * (fire-in-heading; the caller fills in the actual direction from facing).
+ * Returns 0 (no fire, no aim) when joy == 0. */
+u8 decode_aim_joy(u8 joy, s8 *out_adx, s8 *out_ady);
 
 /* Map a QWEADZXC key bitmask to a DIR_* (DIR_NONE if no aim key held).
  * If several keys are held, the lowest bit (scan order Q,W,E,A,D,Z,X,C) wins. */
@@ -78,10 +96,13 @@ void decode_move_keys(u8 keys, s8 *dx, s8 *dy);
  * prev_facing is a DIR_* (or DIR_NONE before first move). */
 u8 update_facing(u8 prev_facing, s8 move_dx, s8 move_dy);
 
-/* Combine everything into *out. `facing` (DIR_* or DIR_NONE) is used so the
- * Kempston FIRE button shoots in the facing direction; QWEADZXC keys override
- * with an absolute 8-way aim. Uses an out-param (not struct return) because
- * SDCC's z80 codegen is unreliable returning structs by value. */
+/* Combine Scheme-A inputs into *out.
+ *   joy    -- normalised Kempston byte (JOY_* bits); JOY_FIRE sets boost.
+ *   keys   -- QWEADZXC bitmask; any key sets aim+fire.
+ *   facing -- DIR_* (or DIR_NONE) for fire-in-heading fallback (unused in A
+ *             since JOY_FIRE now boosts -- kept for API stability).
+ * Uses an out-param (not struct return) because SDCC's z80 codegen is
+ * unreliable returning structs by value. */
 void make_intent(u8 joy, u8 keys, u8 facing, intent_t *out);
 
 /* Reject a *floating* Kempston read. A real stick can never hold two opposing

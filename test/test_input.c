@@ -1,7 +1,7 @@
 /*
  * test_input.c -- host unit tests for the pure input decode logic.
  * No hardware: validates joystick decode, QWEADZXC aim mapping, facing,
- * and the combined intent (incl. Kempston-fire-in-facing-direction).
+ * and the combined intent (incl. boost/fire re-sourcing per scheme).
  */
 #include <assert.h>
 #include <stdio.h>
@@ -70,31 +70,76 @@ static void test_make_intent(void)
 {
     intent_t in;
 
-    /* No input at all: no movement, no fire. */
+    /* No input at all: no movement, no fire, no boost. */
     make_intent(0, 0, DIR_E, &in);
     CHECK(in.move_dx == 0 && in.move_dy == 0);
     CHECK(in.fire == 0 && in.aim_dx == 0 && in.aim_dy == 0);
+    CHECK(in.boost == 0);
 
-    /* Move only (no fire). */
+    /* Move only (no fire, no boost). */
     make_intent(JOY_RIGHT, 0, DIR_E, &in);
     CHECK(in.move_dx == 1 && in.move_dy == 0 && in.fire == 0);
+    CHECK(in.boost == 0);
 
-    /* Kempston FIRE shoots in the facing direction (here: West). */
+    /* Scheme A: JOY_FIRE now sets boost, NOT fire. */
     make_intent(JOY_FIRE, 0, DIR_W, &in);
-    CHECK(in.fire == 1 && in.aim_dx == -1 && in.aim_dy == 0);
+    CHECK(in.fire == 0);
+    CHECK(in.boost != 0);
+    CHECK(in.aim_dx == 0 && in.aim_dy == 0);
 
-    /* Kempston FIRE with facing == NONE: no shot (nothing to aim at). */
+    /* Scheme A: JOY_FIRE with NONE facing still boosts, not fires. */
     make_intent(JOY_FIRE, 0, DIR_NONE, &in);
     CHECK(in.fire == 0);
+    CHECK(in.boost != 0);
 
-    /* QWEADZXC overrides facing: hold E key -> shoot East regardless of facing W. */
+    /* Scheme A: QWEADZXC keys still set aim+fire; JOY_FIRE alongside also boosts. */
     make_intent(JOY_FIRE, KEY_D, DIR_W, &in);
     CHECK(in.fire == 1 && in.aim_dx == 1 && in.aim_dy == 0);
+    CHECK(in.boost != 0);
 
     /* Move and shoot independently (true twin-stick): move up, shoot down-left. */
     make_intent(JOY_UP, KEY_Z, DIR_N, &in);
     CHECK(in.move_dx == 0 && in.move_dy == -1);
     CHECK(in.fire == 1 && in.aim_dx == -1 && in.aim_dy == 1);
+    CHECK(in.boost == 0);
+
+    /* Scheme A: QWEADZXC fires without boost when JOY_FIRE not held. */
+    make_intent(0, KEY_W, DIR_E, &in);
+    CHECK(in.fire == 1 && in.aim_dx == 0 && in.aim_dy == -1);
+    CHECK(in.boost == 0);
+}
+
+/* decode_aim_joy: Scheme-B helper -- maps Kempston tilt byte to aim+fire.
+ * Fire bit on the stick (JOY_FIRE) fires in heading; directional deflection
+ * sets aim_dx/aim_dy and fires. This is the pure decode side. */
+static void test_decode_aim_joy(void)
+{
+    s8 adx, ady;
+    u8 fire;
+
+    /* No stick input -> no aim, no fire. */
+    fire = decode_aim_joy(0, &adx, &ady);
+    CHECK(fire == 0 && adx == 0 && ady == 0);
+
+    /* Tilt right -> aim East, fire. */
+    fire = decode_aim_joy(JOY_RIGHT, &adx, &ady);
+    CHECK(fire == 1 && adx == 1 && ady == 0);
+
+    /* Tilt up -> aim North, fire. */
+    fire = decode_aim_joy(JOY_UP, &adx, &ady);
+    CHECK(fire == 1 && adx == 0 && ady == -1);
+
+    /* Diagonal tilt -> aim NE, fire. */
+    fire = decode_aim_joy(JOY_UP | JOY_RIGHT, &adx, &ady);
+    CHECK(fire == 1 && adx == 1 && ady == -1);
+
+    /* FIRE only (no tilt) -> no aim change (returns 0,0), fire still set. */
+    fire = decode_aim_joy(JOY_FIRE, &adx, &ady);
+    CHECK(fire == 1 && adx == 0 && ady == 0);
+
+    /* Tilt with FIRE bit -> aim from tilt, still fires. */
+    fire = decode_aim_joy(JOY_LEFT | JOY_FIRE, &adx, &ady);
+    CHECK(fire == 1 && adx == -1 && ady == 0);
 }
 
 static void test_joy_sanitize(void)
@@ -118,6 +163,7 @@ int main(void)
     test_update_facing();
     test_make_intent();
     test_joy_sanitize();
+    test_decode_aim_joy();
     printf("input: %d checks passed\n", checks);
     return 0;
 }
