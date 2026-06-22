@@ -16,15 +16,17 @@
  *   - game over:   lives==0 -> a GAME OVER screen with final score + wave;
  *                  FIRE/SPACE resumes from the death wave, Q starts a fresh game
  *   - sound:       1-bit beeper SFX on shoot/explode/hit/death/extra-life/bonus
- *   - HUD:         lives + shields (top), timer + boost bars (bottom), and the
- *                  SCORE rendered as big attribute-cell digits behind the action
+ *   - HUD:         lives + shields (top), score text + dash-ready dot (frame)
+ *   - background:  a static attribute "shape" chosen per run (bgpat), or
+ *                  re-rolled each wave in noisy mode -- painted once, zero cost
+ *                  per frame
  *   - rendering:   incremental erase+redraw into the hidden buffer, page-flip
  *
  * All hardware (port 0xFF, screen/attr addresses) lives in scld.c; the loop only
- * asks for the back buffer, blits into it, and presents. The score-digit
- * background uses dark paper on lit cells so the white-ink sprites stay readable
- * (design D1); every cell-restore path (fx/death/telegraph) asks the HUD for the
- * current background colour so explosions never punch holes in the score.
+ * asks for the back buffer, blits into it, and presents. The arena background
+ * keeps WHITE ink on every interior cell so white-ink sprites stay readable on
+ * any paper colour; bg_attr() is the single source of truth every cell-restore
+ * path (fx/death/telegraph) reads, so explosions never punch holes in it.
  */
 
 #include "scld.h"
@@ -39,7 +41,8 @@
 #include "rng.h"
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
-#include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
+#include "hud.h"           /* put_attr, HUD widgets (ATTR macro is in types.h) */
+#include "bgpat.h"         /* per-run / per-wave background shapes */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
 #include <string.h>       /* memset (game-over fills) */
@@ -112,37 +115,64 @@ static s8 step_sign(s8 v)
     return 0;
 }
 
-/* Background attribute for one cell: a bright-magenta frame all the way around
- * the screen (rows 0/23 + cols 0/31), with WHITE ink so the HUD text/sprites
- * drawn on the frame stay readable, over a blue/black checker floor. Used both
- * to paint the arena and to RESTORE a cell after an explosion / telegraph pulse.
- * (put_attr() + the ATTR macro are shared from hud.h.) */
-static u8 bg_attr(u8 row, u8 col)
+/* The per-run background lives in this RAM table (frame ring + interior). It is
+ * generated once per game (or per wave in noisy mode) and block-copied into both
+ * attribute blocks by bg_paint(). bg_attr() is the single source of truth that
+ * fx_render() and the spawn telegraph read to restore a cell. */
+static u8  bg_cells[BGPAT_CELLS];
+static u8  bg_mode;        /* BG_MODE_STATIC or BG_MODE_WAVE                  */
+static u8  bg_cur_id;      /* current pattern id                             */
+static u16 bg_rng = 0xC0DEu;   /* private LCG so we never perturb game rng    */
+
+#define BG_MODE_STATIC   0u
+#define BG_MODE_WAVE     1u
+#define BG_NOISY_PERCENT 50u   /* odds a run uses the per-wave noisy tier     */
+
+static u8 bg_rand(void)
 {
-    if (row == 0u || row == 23u || col == 0u || col == 31u) {
-        return ATTR(1, 3, 7);          /* frame: bright magenta, white ink    */
-    }
-    if ((u8)((row + col) & 1u)) {
-        return ATTR(0, 1, 7);          /* dark-blue checker                   */
-    }
-    return ATTR(0, 0, 7);              /* black checker                       */
+    bg_rng = (u16)(bg_rng * 25173u + 13849u);
+    return (u8)(bg_rng >> 8);
 }
 
-/* Paint the whole arena into BOTH attribute blocks (identical on both screens,
- * so the page-flip never disturbs colour). */
+/* Background attribute for one cell -- a lookup into the chosen pattern. Used to
+ * RESTORE a cell after an explosion / telegraph pulse. */
+static u8 bg_attr(u8 row, u8 col)
+{
+    return bg_cells[(u16)row * 32u + col];
+}
+
+/* Block-copy the chosen pattern into BOTH attribute blocks (identical on both
+ * screens, so the page-flip never disturbs colour). ~32k T, well under a frame. */
 static void bg_paint(void)
 {
-    u8 *a = (u8 *)SCLD_ATTRS_A;
-    u8 *b = (u8 *)SCLD_ATTRS_B;
-    u8  row, col;
-    u16 i = 0;
-    for (row = 0; row < 24u; row++) {
-        for (col = 0; col < 32u; col++, i++) {
-            u8 v = bg_attr(row, col);
-            a[i] = v;
-            b[i] = v;
-        }
+    memcpy((u8 *)SCLD_ATTRS_A, bg_cells, SCLD_ATTRS_LEN);
+    memcpy((u8 *)SCLD_ATTRS_B, bg_cells, SCLD_ATTRS_LEN);
+}
+
+/* Choose this run's background. ~BG_NOISY_PERCENT of runs use the noisy tier
+ * (re-rolled each wave by bg_next_wave); the rest pick one low-noise shape and
+ * keep it. Generates bg_cells but does NOT paint (caller paints). */
+static void bg_new_run(void)
+{
+    if (bg_rand() < (u8)((BG_NOISY_PERCENT * 256u) / 100u)) {
+        bg_mode   = BG_MODE_WAVE;
+        bg_cur_id = bgpat_pick(BGPAT_NOISY_FIRST, BGPAT_NOISY_COUNT, 0xFFu, bg_rand());
+    } else {
+        bg_mode   = BG_MODE_STATIC;
+        bg_cur_id = bgpat_pick(BGPAT_LOWNOISE_FIRST, BGPAT_LOWNOISE_COUNT, 0xFFu, bg_rand());
     }
+    bgpat_generate(bg_cells, bg_cur_id, bg_rng);
+}
+
+/* At a wave boundary, re-roll + repaint when in noisy mode; no-op otherwise. */
+static void bg_next_wave(void)
+{
+    if (bg_mode != BG_MODE_WAVE) {
+        return;
+    }
+    bg_cur_id = bgpat_pick(BGPAT_NOISY_FIRST, BGPAT_NOISY_COUNT, bg_cur_id, bg_rand());
+    bgpat_generate(bg_cells, bg_cur_id, bg_rng);
+    bg_paint();
 }
 
 /* ---- enemy-hit explosions: brief colour pops, NO game freeze ----
@@ -221,7 +251,7 @@ static void fx_render(void)
 /*
  * Death animation: a fast attribute KABOOM. The scene freezes on the displayed
  * buffer; one of three random styles plays, painting only the cells it needs
- * (cheap/snappy). Caller restores the arena afterwards (hud_paint_background).
+ * (cheap/snappy). Caller restores the arena afterwards (bg_paint).
  */
 /* Paint one attribute cell, clipped to the grid. */
 static void put_cell(s8 col, s8 row, u8 v)
@@ -594,8 +624,7 @@ int main(void)
     enemies_t enemies;
     intent_t  in;
     /* Single source of truth for the run: wave (difficulty index), BCD score,
-     * lives, shields. game_new() seeds it; the HUD reads g.score for its
-     * big-attribute-digit background. */
+     * lives, shields. game_new() seeds it. */
     static game_state_t g;
     u8        i;
     u8        cooldown = 0;
@@ -636,7 +665,8 @@ int main(void)
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
     game_new(&g);                     /* wave 1, score 0, START_LIVES/SHIELDS   */
-    bg_paint();                       /* checker + frame into both attr blocks  */
+    bg_new_run();                     /* pick this run's background shape       */
+    bg_paint();                       /* copy the chosen pattern into both attrs */
     hud_score(&g.score, 1u);          /* full score draw after the clear        */
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
@@ -759,6 +789,7 @@ int main(void)
                     g.wave++;
                 }
                 enemies_spawn(&enemies, g.wave);    /* next wave (telegraphed)    */
+                bg_next_wave();                     /* noisy mode: new shape this wave */
                 wave_total = wave_time_frames(g.wave);
                 wave_timer = wave_total;
                 wave_secs  = 0xFFFFu;               /* force a timer redraw       */
@@ -791,12 +822,13 @@ int main(void)
                         } else {
                             game_new(&g);                            /* wave 1     */
                         }
+                        bg_new_run();    /* fresh background for the new/resumed game */
                     } else {
                         g.shields = START_SHIELDS;    /* new life, full shields    */
                     }
                     scld_clear(SCLD_SCREEN_A);        /* wipe the death-anim AND the */
                     scld_clear(SCLD_SCREEN_B);        /* GAME OVER text off both pages */
-                    bg_paint();                       /* repaint checker + frame    */
+                    bg_paint();                       /* repaint the chosen pattern */
                     hud_score(&g.score, 1u);          /* full score after the clear */
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
