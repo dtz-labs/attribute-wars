@@ -72,6 +72,19 @@ uint8_t scld_back_page(void)
     return (uint8_t)(scld_front ^ 1u);
 }
 
+/* Bases of the CURRENTLY-DISPLAYED buffer. For frozen effects that do not
+ * page-flip (e.g. the death explosion), drawing into only the shown buffer is
+ * half the memory traffic of touching both -- the hidden one is never seen. */
+uint16_t scld_shown(void)
+{
+    return scld_front ? SCLD_SCREEN_B : SCLD_SCREEN_A;
+}
+
+uint16_t scld_shown_attrs(void)
+{
+    return scld_front ? SCLD_ATTRS_B : SCLD_ATTRS_A;
+}
+
 void scld_present(void)
 {
     intrinsic_halt();                   /* sync to the 50 Hz frame interrupt   */

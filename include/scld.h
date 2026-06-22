@@ -143,6 +143,12 @@ extern uint16_t scld_back(void);
  * per-buffer state (e.g. last-drawn positions for incremental erase). */
 extern uint8_t  scld_back_page(void);
 
+/* Bitmap / attribute base of the buffer CURRENTLY ON SCREEN. For frozen effects
+ * that don't page-flip (death explosion): draw into only this one (half the
+ * writes of touching both buffers; the hidden one is never displayed). */
+extern uint16_t scld_shown(void);
+extern uint16_t scld_shown_attrs(void);
+
 /* Wait for the next 50 Hz frame interrupt (HALT), then page-flip so the buffer
  * you just drew becomes visible. One call per frame, after drawing. */
 extern void     scld_present(void);

@@ -224,11 +224,14 @@ static void fx_render(void)
  * buffer; one of three random styles plays, painting only the cells it needs
  * (cheap/snappy). Caller restores the arena afterwards (hud_paint_background).
  */
-/* Paint one attribute cell, clipped to the grid. */
-static void put_cell(s8 col, s8 row, u8 v)
+/* Paint one attribute cell of ONE attribute block (clipped). The death explosion
+ * is a frozen scene (no page-flip), so it draws into only the displayed block --
+ * half the writes of put_attr(), which touches both. Caller passes the shown
+ * attribute base (scld_shown_attrs()). */
+static void put_cell(u16 atbase, s8 col, s8 row, u8 v)
 {
     if (col >= 0 && col < 32 && row >= 0 && row < 24) {
-        put_attr((u8)row, (u8)col, v);
+        ((u8 *)(uintptr_t)atbase)[(u16)row * 32u + (u16)col] = v;
     }
 }
 
@@ -240,11 +243,12 @@ static void put_cell(s8 col, s8 row, u8 v)
  */
 static void death_anim(u8 px, u8 py)
 {
-    s8 cx   = (s8)(px >> 3);
-    s8 cy   = (s8)(py >> 3);
-    u8 seed = rng_byte();
-    u8 maxR = (u8)(7u + (rng_byte() & 3u));        /* random size 7..10 */
-    u8 f;
+    s8  cx   = (s8)(px >> 3);
+    s8  cy   = (s8)(py >> 3);
+    u8  seed = rng_byte();
+    u8  maxR = (u8)(7u + (rng_byte() & 3u));        /* random size 7..10 */
+    u16 sat  = scld_shown_attrs();                  /* draw into the shown block only */
+    u8  f;
 
     for (f = 1u; f <= maxR; f++) {
         s8 lim = (s8)(f + 1);
@@ -261,8 +265,11 @@ static void death_anim(u8 px, u8 py)
                 adx = (u8)(dx < 0 ? -dx : dx);
                 d   = (u8)(adx > ady ? adx : ady);              /* blocky radius   */
                 /* per-cell stable noise pushes the cell "outward" -> the WHOLE
-                 * ball is lumpy (core + bands + edge), not a clean square. */
-                jit = (u8)(((u8)(adx * 7u + ady * 13u) ^ seed) & 3u);
+                 * ball is lumpy (core + bands + edge), not a clean square.
+                 * (adx*7 + ady*13) done with shifts+adds -- no sdcc multiply in
+                 * this per-cell hot loop. */
+                jit = (u8)(((u8)(((adx << 3) - adx)
+                                 + ((ady << 3) + (ady << 2) + ady)) ^ seed) & 3u);
                 fd  = (u8)(d + jit);
                 if (fd > f) {
                     continue;                                   /* outside the ball */
@@ -270,7 +277,7 @@ static void death_anim(u8 px, u8 py)
                 if      (fd <= (u8)(f >> 1)) v = ATTR(1, 7, 0); /* white-hot core  */
                 else if (fd <= (u8)(f - 1u)) v = ATTR(1, 6, 0); /* yellow glow     */
                 else                         v = ATTR(1, 2, 0); /* red shock edge  */
-                put_cell(col, row, v);
+                put_cell(sat, col, row, v);
             }
         }
         /* Death explosion sound, SYNCED with the growing fireball: the scene is
