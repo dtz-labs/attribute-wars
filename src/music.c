@@ -10,6 +10,8 @@
  * mode change; the IY-preserving shim makes that call safe under sdcc_iy.
  */
 #include "music.h"
+#include "sfx.h"        /* SFX_* ids + SFX_N (AY SFX reuse the same ids)        */
+#include "rng.h"        /* rng_byte() for the explosion crackle                */
 
 #ifdef __SDCC
 
@@ -23,6 +25,28 @@ extern void pt3_mute(void);             /* silence all channels                *
 
 static u8 music_on;     /* 1 once an AY is detected */
 
+/* ---- AY channel-C sound effects --------------------------------------------
+ * State read by the asm_vt_hardware_out merge in music_ay.asm: while asfx_vol>0
+ * it overlays channel C (amp + tone/noise) onto the player's register output.
+ * The volume decays by asfx_step each frame -> a natural percussive envelope. */
+u8  asfx_vol;     /* 0..15, 0 = no SFX active */
+u8  asfx_kind;    /* 0 = tone (R4/R5), 1 = noise (R6) */
+u16 asfx_tper;    /* tone period (channel C) */
+u8  asfx_nper;    /* noise period (shared R6) */
+static u8 asfx_step;   /* volume decay per frame */
+
+/* Per-SFX voice: (kind, tone period, noise period, decay step). Tuned by ear;
+ * AY clock ~1.77 MHz so tone freq ~= 110800 / period. */
+typedef struct { u8 kind; u16 tper; u8 nper; u8 step; } asfx_voice_t;
+static const asfx_voice_t asfx_tbl[SFX_N] = {
+    /* SFX_SHOOT      */ { 0u, 126u,  0u, 5u },  /* ~880 Hz pew, fast decay   */
+    /* SFX_EXPLODE    */ { 1u,   0u, 10u, 2u },  /* bright noise burst        */
+    /* SFX_HIT        */ { 1u,   0u, 16u, 3u },  /* shorter noise tick        */
+    /* SFX_DEATH      */ { 1u,   0u, 24u, 1u },  /* long low noise boom       */
+    /* SFX_EXTRA_LIFE */ { 0u,  84u,  0u, 1u },  /* ~1320 Hz chime, slow fade */
+    /* SFX_BONUS      */ { 0u, 106u,  0u, 2u },  /* ~1045 Hz blip             */
+};
+
 u8 music_init(void)
 {
     music_on = ay_detect();
@@ -35,8 +59,12 @@ u8 music_init(void)
 
 void music_tick(void)
 {
-    if (music_on) {
-        pt3_play_safe();                /* one frame; writes AY via latched ports */
+    if (!music_on) {
+        return;
+    }
+    pt3_play_safe();                    /* play one frame (override merges SFX) */
+    if (asfx_vol) {                     /* decay the channel-C SFX envelope     */
+        asfx_vol = (u8)((asfx_vol > asfx_step) ? (asfx_vol - asfx_step) : 0u);
     }
 }
 
@@ -47,10 +75,41 @@ void music_stop(void)
     }
 }
 
+u8 music_is_on(void)
+{
+    return music_on;
+}
+
+void music_sfx(u8 id)
+{
+    if (!music_on || id >= SFX_N) {
+        return;
+    }
+    asfx_kind = asfx_tbl[id].kind;
+    asfx_tper = asfx_tbl[id].tper;
+    asfx_nper = asfx_tbl[id].nper;
+    asfx_step = asfx_tbl[id].step;
+    asfx_vol  = 15u;                    /* full, then decays each frame */
+}
+
+void music_sfx_noise(void)
+{
+    if (!music_on) {
+        return;
+    }
+    asfx_kind = 1u;                     /* noise */
+    asfx_nper = (u8)(1u + (rng_byte() & 0x1Fu));   /* random hiss 1..32 */
+    asfx_step = 5u;                                /* very short crackle */
+    asfx_vol  = 15u;
+}
+
 #else /* host build -- pure no-op (no Z80/AY dependency) */
 
-u8   music_init(void) { return 0; }
-void music_tick(void) { }
-void music_stop(void) { }
+u8   music_init(void)       { return 0; }
+void music_tick(void)       { }
+void music_stop(void)       { }
+u8   music_is_on(void)      { return 0; }
+void music_sfx(u8 id)       { (void)id; }
+void music_sfx_noise(void)  { }
 
 #endif /* __SDCC */

@@ -23,4 +23,19 @@ void music_tick(void);
 /* Stop the music (silences the AY). Defined for completeness; unused for now. */
 void music_stop(void);
 
+/* ---- AY sound effects (only when an AY is present) -------------------------
+ * While the tune plays, the BLOCKING beeper SFX stall the loop and make the
+ * music wobble, so SFX move onto AY channel C instead -- instant register
+ * writes, no busy-loop. The PT3 player keeps channels A+B; channel C is the SFX.
+ * On a beeper-only machine these are unused and sfx.c keeps the beeper. */
+
+/* 1 if an AY was detected (i.e. music is playing and AY SFX should be used). */
+u8   music_is_on(void);
+
+/* Trigger sound effect `id` (an SFX_* from sfx.h) on AY channel C. */
+void music_sfx(u8 id);
+
+/* Short random-noise crackle on channel C (explosion grain). */
+void music_sfx_noise(void);
+
 #endif /* MUSIC_H */

@@ -24,6 +24,7 @@
  */
 
 #include "sfx.h"
+#include "music.h"  /* route SFX to the AY when an AY tune is playing */
 
 #ifdef __SDCC
 
@@ -59,6 +60,10 @@ static const sfx_params_t sfx_table[SFX_N] = {
 void sfx_play(u8 id)
 {
     if (id >= SFX_N) return;
+    if (music_is_on()) {        /* AY present: play on channel C (no beeper stall) */
+        music_sfx(id);
+        return;
+    }
     sfx_hp  = sfx_table[id].hp;
     sfx_dur = sfx_table[id].dur;
     sfx_blip();
@@ -70,6 +75,10 @@ void sfx_play(u8 id)
 void sfx_noise(void)
 {
     u8 j;
+    if (music_is_on()) {        /* AY present: noise crackle on channel C */
+        music_sfx_noise();
+        return;
+    }
     for (j = 0; j < 2u; j++) {
         sfx_hp  = (u8)(1u + (rng_byte() & 0x0Fu));   /* random pitch 1..16 */
         sfx_dur = 9u;

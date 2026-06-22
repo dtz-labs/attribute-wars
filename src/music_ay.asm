@@ -33,6 +33,12 @@
         EXTERN  asm_VT_MUTE             ; vendored player: silence all channels
         EXTERN  _spectrumizer_pt3       ; tune.asm: the PT3 module (label = addr)
 
+        ; channel-C sound-effect state (music.c); overlaid by sfx_merge below
+        EXTERN  _asfx_vol               ; u8  0=inactive, else amplitude 1..15
+        EXTERN  _asfx_kind              ; u8  0=tone, 1=noise
+        EXTERN  _asfx_tper              ; u16 tone period (R4/R5)
+        EXTERN  _asfx_nper              ; u8  noise period (R6)
+
 ; ---------------------------------------------------------------------------
 ; Latched by _ay_detect; read by the output path. Local (not PUBLIC).
 ; ---------------------------------------------------------------------------
@@ -170,6 +176,13 @@ sel_read:
 asm_vt_hardware_out:
         xor     a                       ; start at register 0
 asm_vt_hardware_out_A0:
+        ; If a channel-C sound effect is live, overlay it onto the player's
+        ; freshly-computed AYREGS before they go out (the player keeps A+B).
+        push    af
+        ld      a,(_asfx_vol)
+        or      a
+        call    nz,sfx_merge
+        pop     af
         ld      hl,asm_VT_AYREGS
         ld      e,a
         ld      d,0
@@ -200,6 +213,42 @@ vho_out:
         out     (c),a                   ; write data
         ld      a,d                     ; restore register index
         pop     hl
+        ret
+
+; ---------------------------------------------------------------------------
+; sfx_merge -- overlay the live channel-C sound effect onto asm_VT_AYREGS (the
+; player keeps channels A+B). Sets amp C = _asfx_vol, and either tone C (R4/R5 +
+; mixer tone-C enable) or noise (R6 + mixer noise-C enable) per _asfx_kind. The
+; player recomputes AYREGS every frame, so this overlay is naturally transient:
+; when the effect ends (_asfx_vol==0) channel C returns to the music. The AY
+; mixer is active-LOW (a 0 bit enables that source). Clobbers A,B.
+; ---------------------------------------------------------------------------
+sfx_merge:
+        ld      a,(_asfx_vol)
+        ld      (asm_VT_AYREGS+10),a    ; amp C = SFX volume (fixed, no envelope)
+        ld      a,(asm_VT_AYREGS+7)
+        ld      b,a                     ; B = player's mixer byte
+        ld      a,(_asfx_kind)
+        or      a
+        jr      nz,sm_noise
+        ; tone: enable tone C (bit2=0), disable noise C (bit5=1)
+        ld      a,b
+        and     0xFB
+        or      0x20
+        ld      (asm_VT_AYREGS+7),a
+        ld      a,(_asfx_tper)          ; tone C fine   (R4)
+        ld      (asm_VT_AYREGS+4),a
+        ld      a,(_asfx_tper+1)        ; tone C coarse (R5)
+        ld      (asm_VT_AYREGS+5),a
+        ret
+sm_noise:
+        ; noise: disable tone C (bit2=1), enable noise C (bit5=0)
+        ld      a,b
+        or      0x04
+        and     0xDF
+        ld      (asm_VT_AYREGS+7),a
+        ld      a,(_asfx_nper)          ; noise period (shared R6)
+        ld      (asm_VT_AYREGS+6),a
         ret
 
 ; ---------------------------------------------------------------------------
