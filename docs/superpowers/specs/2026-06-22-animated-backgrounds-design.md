@@ -202,6 +202,18 @@ editing):**
 
 ## 5. Component B — game-over plasma (Phase 2)
 
+> **Amendment (2026-06-23, as built):** the hi-color 8×1 approach below was tried
+> and rejected by the user (text hard to read over bright colour, motion slow,
+> pattern scrolled upward). **Shipped instead:** a **standard 8×8** plasma — a
+> *static* interference field whose colours are **cycled by phase** (palette
+> rotation → shimmers in place, no scroll), in a **dark non-bright palette** so
+> the white text always reads. 768 cells written into both attribute blocks each
+> frame → smooth at 50 Hz, and plain 8×8 attrs are portable to Timex/128K/48K
+> with no special mode. The Timex **hi-color extension was removed** (unused).
+> `plasma_field(x,y)` (static) + `plasma_palette(v,phase)` (dark, phase-rotated)
+> are the pure, host-tested API. Treat this amendment as authoritative; the
+> hi-color text below is kept for history.
+
 A flowing plasma behind the GAME OVER text, rendered in **Timex hi-color 8×1**
 for smooth per-scanline colour, with an automatic **standard-8×8 fallback** so
 the same binary looks right on 128K/48K too (see §6.5 portability).
@@ -312,10 +324,10 @@ no hi-color, no `OUT 0xFF`**).
 - **Globe — portable.** It uses the abstracted double-buffer + standard 8×8
   attributes (which every target has), so it works on Timex now and on 128K once
   that kernel lands (48K: single-buffer, flickery). No globe-specific 128K work.
-- **Plasma — auto-degrades.** Hi-color 8×1 is SCLD-exclusive, but the dual-plane
-  write (§5) means the standard 8×8 plane is the live one on 128K/48K
-  automatically. The plasma *field* is pure/portable; only the smooth 8×1
-  rendering is Timex-specific, and it falls back without detection.
+- **Plasma — natively portable (as built).** The shipped 8×8 plasma (§5
+  amendment) uses only standard ULA attributes, which every target has, so it
+  works identically on Timex/128K/48K with no hi-color, no dual-plane, and no
+  detection. (The original hi-color/auto-degrade scheme is moot.)
 
 ## 7. Build phasing
 
