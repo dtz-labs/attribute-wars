@@ -663,7 +663,7 @@ static u8 title_screen(void)
         title_attr_row(22, ((t >> 4) & 1u) ? ATTR(1, 0, 7) : ATTR(0, 0, 0));  /* flash */
         globe_draw(theta);
         scld_present();
-        theta = (u8)(theta + 1u);
+        theta = (u8)(theta + 3u);
         t++;
         if (pause > 0u) { pause--; if (pause == 0u) s = SHINE_S_MIN; }
         else if (s < SHINE_S_MAX) s++;
@@ -692,7 +692,7 @@ static u8 title_screen(void)
     while (in_inkey() != 0) {
         globe_draw(theta);
         scld_present();
-        theta = (u8)(theta + 1u);
+        theta = (u8)(theta + 3u);
     }
 
     for (;;) {
@@ -702,7 +702,7 @@ static u8 title_screen(void)
         title_attr_row(16, ATTR(1, 0, 4));
         globe_draw(theta);
         scld_present();
-        theta = (u8)(theta + 1u);
+        theta = (u8)(theta + 3u);
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;

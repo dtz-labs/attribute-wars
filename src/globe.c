@@ -7,7 +7,7 @@
 #include "fxtab.h"
 
 #define NLAT 9u    /* latitudes -80..80                                  */
-#define NLON 20u   /* longitudes around                                  */
+#define NLON 12u   /* longitudes around (sparse, so dot motion is clear) */
 #define LAT_STEP 20   /* 160 / (NLAT-1) degrees between latitudes        */
 #define NPTS (NLAT * NLON)   /* 180 */
 
