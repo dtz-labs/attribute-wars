@@ -9,6 +9,26 @@
 *.o
 *.lis
 
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.keystore
+*.jks
+credentials.json
+credentials.yml
+credentials.yaml
+service-account*.json
+
 # Emulator logs & scratch state (never commit -- they leak local paths)
 *.log
 usb.txt
