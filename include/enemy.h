@@ -67,6 +67,9 @@ u8 enemies_spawn_hunter_clones(enemies_t *es, u8 x, u8 y);
 /* Random chaser death bonus: spawn up to two bouncer clones near a kill site. */
 u8 enemies_spawn_bouncer_clones(enemies_t *es, u8 x, u8 y);
 
+/* Random hunter death bonus: spawn up to two chaser clones near a kill site. */
+u8 enemies_spawn_chaser_clones(enemies_t *es, u8 x, u8 y);
+
 /* Returns the pattern used in the last enemies_spawn call (for tests). */
 u8 enemy_last_pattern(void);
 

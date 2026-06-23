@@ -11,8 +11,15 @@
 #include "arena.h"
 #include "rng.h"
 
-#define DODGE_DIST 48u          /* hunter flees a bullet this close (per axis) */
-#define HUNTER_FLEE_SPEED 2     /* fleeing hunters step faster than chasers */
+#ifdef ZX128_NO_MUSIC
+/* ZX128 memory-constrained: keep original hunter params */
+#define DODGE_DIST 48u
+#define HUNTER_FLEE_SPEED 2
+#else
+/* Other platforms: tougher hunters */
+#define DODGE_DIST 64u
+#define HUNTER_FLEE_SPEED 3
+#endif
 #define MAX_AXIS_BOUNCERS 2u    /* cap vertical/horizontal bouncers per wave */
 #define CHASER_WOUND_JUMP1 8u   /* first hit displacement (wound 3->2) */
 #define CHASER_WOUND_JUMP2 12u  /* second hit displacement (wound 2->1) */
@@ -361,6 +368,37 @@ u8 enemies_spawn_bouncer_clones(enemies_t *es, u8 x, u8 y)
         plus8_clamped(x, ARENA_R), minus8_clamped(y, ARENA_T), (s8)0, sy));
     return spawned;
 }
+
+#ifndef ZX128_NO_MUSIC
+/* Chaser split logic (Timex/ZX48 only - ZX128 too memory-constrained) */
+static u8 spawn_chaser_clone(enemies_t *es, u8 x, u8 y)
+{
+    enemy_t *e = es->e;
+    u8 i;
+    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
+        if (!e->alive) {
+            e->x = x;
+            e->y = y;
+            e->dx = (s8)0;
+            e->dy = (s8)0;
+            e->level = ENEMY_CHASE;
+            e->alive = 3u;  /* chasers now start with 3 hit points */
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
+u8 enemies_spawn_chaser_clones(enemies_t *es, u8 x, u8 y)
+{
+    u8 spawned = 0u;
+    spawned = (u8)(spawned + spawn_chaser_clone(es,
+        minus8_clamped(x, ARENA_L), plus8_clamped(y, ARENA_B)));
+    spawned = (u8)(spawned + spawn_chaser_clone(es,
+        plus8_clamped(x, ARENA_R), minus8_clamped(y, ARENA_T)));
+    return spawned;
+}
+#endif
 
 u8 enemies_any_alive(const enemies_t *es)
 {

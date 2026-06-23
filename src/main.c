@@ -873,9 +873,17 @@ main_menu:
                             if (killed_level[i] == ENEMY_HUNTER &&
                                 enemy_count <= (u8)(MAX_ENEMIES - 2u) &&
                                 (rng_byte() & 1u)) {
+#ifndef ZX128_NO_MUSIC
+                                /* Hunter splits into 2 chasers (Timex/ZX48) */
+                                enemy_count = (u8)(enemy_count +
+                                    enemies_spawn_chaser_clones(&enemies,
+                                                               killed_x[i], killed_y[i]));
+#else
+                                /* Hunter splits into 2 hunter clones (ZX128 - memory constrained) */
                                 enemy_count = (u8)(enemy_count +
                                     enemies_spawn_hunter_clones(&enemies,
                                                                killed_x[i], killed_y[i]));
+#endif
                             }
                             if (killed_level[i] == ENEMY_CHASE &&
                                 enemy_count <= (u8)(MAX_ENEMIES - 2u) &&
