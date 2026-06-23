@@ -57,6 +57,12 @@
 #define PLAYER_START_X 128u
 #define PLAYER_START_Y 96u
 
+#ifdef ZX_SINCLAIR_DUAL_STICK
+#define CTRL_DUAL_LABEL "3 SINCLAIR JOYSTICKS"
+#else
+#define CTRL_DUAL_LABEL "3 TWO JOYSTICKS (TS2068)"
+#endif
+
 /* Visual recoil (spec §3.5): how many frames the ship draws kicked-back. */
 #define RECOIL_FRAMES 2u
 
@@ -77,10 +83,12 @@ static u8     prevn[2];
  * Bullets/thruster are not sprites -- they use the cheap bul_draw/bul_erase. */
 static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
 static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer (all-dir) */
+#ifndef ZX128_PAGE_FLIP
 static u8 ps_enemy_vbounce[SPR_PRESHIFT_SIZE];  /* level 4 vertical bouncer  */
 static u8 ps_enemy_hbounce[SPR_PRESHIFT_SIZE];  /* level 5 horizontal bouncer*/
 static u8 ps_enemy_chase[SPR_PRESHIFT_SIZE];    /* level 2 chaser  */
 static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
+#endif
 /* (the HUD life-heart pre-shift table now lives in hud.c) */
 
 /* Pick the pre-shifted table for an enemy's behaviour level. Level 1 is unused,
@@ -88,6 +96,9 @@ static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
 #if ENEMY_BOUNCE_H != 5
 #error "enemy_sprite_by_level assumes enemy levels 0..5; update the table"
 #endif
+#ifdef ZX128_PAGE_FLIP
+#define ENEMY_SPRITE(level_) ps_enemy
+#else
 static const u8 * const enemy_sprite_by_level[] = {
     ps_enemy, ps_enemy, ps_enemy_chase, ps_enemy_hunter,
     ps_enemy_vbounce, ps_enemy_hbounce
@@ -95,6 +106,7 @@ static const u8 * const enemy_sprite_by_level[] = {
 
 #define ENEMY_SPRITE(level_) \
     (((level_) <= ENEMY_BOUNCE_H) ? enemy_sprite_by_level[(level_)] : ps_enemy)
+#endif
 
 /* Wave time budget in frames for the active wave. Mirrors enemies_spawn()'s
  * index clamp (1-based wave; wave==0 -> wave 1; >16 loops at index 15) so the
@@ -580,7 +592,7 @@ static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
     put_text(SCLD_SCREEN_A,  2,  7, "CONTROLS");
     put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
     put_text(SCLD_SCREEN_A,  2,  9, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text(SCLD_SCREEN_A,  2, 10, "3 TWO JOYSTICKS (TS2068)");
+    put_text(SCLD_SCREEN_A,  2, 10, CTRL_DUAL_LABEL);
     put_text(SCLD_SCREEN_A,  2, 12, "SOUND");
     put_text(SCLD_SCREEN_A,  2, 13, "4 BEEPER");
     put_text(SCLD_SCREEN_A,  2, 14, "5 MUSIC+FX");
@@ -677,10 +689,12 @@ int main(void)
     rng_seed(0xACE1u);
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
+#ifndef ZX128_PAGE_FLIP
     spr_preshift(ps_enemy_vbounce, spr_enemy_vbounce);
     spr_preshift(ps_enemy_hbounce, spr_enemy_hbounce);
     spr_preshift(ps_enemy_chase,   spr_enemy_chase);
     spr_preshift(ps_enemy_hunter,  spr_enemy_hunter);
+#endif
     hud_init();                                  /* build the HUD heart sprite */
 
 main_menu:

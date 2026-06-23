@@ -15,25 +15,29 @@ attribute-heavy visuals, and hardware page flipping where the machine supports i
 |---|---|---|---|
 | Timex TC2048 | primary target | SCLD page flipping | beeper |
 | Timex TC2068 / TS2068 | supported for AY testing | SCLD page flipping | AY music + FX |
-| ZX Spectrum 128K | supported for AY testing | 128K page flipping in progress | AY music + FX |
+| ZX Spectrum 128K | separate build | shadow-screen page flipping | beeper for now |
+| ZX Spectrum 48K | separate build | single-buffer flicker | beeper |
 
 ## Build
 
 Requires z88dk in `~/Programowanie/z88dk`.
 
 ```sh
-./build.sh
+./build.sh        # Timex TC2048/TC2068 build -> build/game.tap
+./build-zx128.sh  # ZX Spectrum 128K build -> build/game-zx128.tap
+./build-zx48.sh   # ZX Spectrum 48K build -> build/game-zx48.tap
 ```
 
-This creates `build/game.tap`. The TAP includes the loading screen converted from
-the original `assets/loading.png`.
+The TAP files include the loading screen converted from the original
+`assets/loading.png`.
 
 ## Run In ZEsarUX
 
 ```sh
 ./run-zesarux-tc2048.sh   # TC2048, beeper default
 ./run-zesarux-tc2068.sh   # TC2068, Timex AY
-./run-zesarux-128k.sh     # ZX Spectrum 128K, standard AY
+./run-zesarux-128k.sh     # ZX Spectrum 128K, shadow-screen page flip
+./run-zesarux-48k.sh      # ZX Spectrum 48K, single-buffer flicker
 ```
 
 `./run-zesarux.sh` is the default TC2048 launcher.

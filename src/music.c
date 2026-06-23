@@ -12,7 +12,19 @@
 #include "sfx.h"        /* SFX_* ids + SFX_N (AY SFX reuse the same ids)        */
 #include "rng.h"        /* rng_byte() for the explosion crackle                */
 
-#ifdef __SDCC
+#if defined(__SDCC) && defined(ZX128_NO_MUSIC)
+
+u8   music_default_sound(void) { return SOUND_BEEPER; }
+const char *music_status_text(void) { return "HW ZX128    AY OFF"; }
+u8   music_init(u8 mode)    { (void)mode; return 0; }
+void music_tick(void)       { }
+void music_stop(void)       { }
+u8   music_is_on(void)      { return 0; }
+u8   music_is_playing(void) { return 0; }
+void music_sfx(u8 id)       { (void)id; }
+void music_sfx_noise(void)  { }
+
+#elif defined(__SDCC)
 
 /* The vendored PT3 player + our asm glue (music_ay.asm / pt3prom.asm). z88dk's
  * <psg/vt2.h> player ships only for the classic clib, so we vendor the player

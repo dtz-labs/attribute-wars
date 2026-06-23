@@ -15,6 +15,7 @@ from pathlib import Path
 
 
 PAGING_WINDOW = 0xC000
+MIN_STACK_GAP = 512
 REQUIRED = (
     "__CODE_END_tail",
     "__DATA_END_tail",
@@ -62,12 +63,21 @@ def main(argv: list[str]) -> int:
     sp = symbols["__register_sp"]
     if sp > PAGING_WINDOW:
         failures.append(f"__register_sp={fmt(sp)} starts inside the 128K paging window")
+    else:
+        gap = sp - symbols["__BSS_END_tail"]
+        if gap < MIN_STACK_GAP:
+            failures.append(
+                f"only {gap} bytes between __BSS_END_tail and SP; need >= {MIN_STACK_GAP}"
+            )
 
     if failures:
         print("ZX128 page-flip layout: NOT SAFE")
         for failure in failures:
             print(f"  - {failure}")
-        print("Required: resident code/data/BSS end <= $C000 and SP <= $C000.")
+        print(
+            "Required: resident code/data/BSS end <= $C000, SP <= $C000, "
+            f"and >= {MIN_STACK_GAP} bytes stack gap."
+        )
         return 1
 
     print("ZX128 page-flip layout: safe")

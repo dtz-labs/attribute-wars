@@ -12,12 +12,10 @@
 #include "sprites.h"   /* spr_heart */
 #include <string.h>    /* memset (top-border bitmap clears) */
 
-/* HUD's own pre-shifted heart table (built once by hud_init()). */
-static u8 ps_hud_heart[SPR_PRESHIFT_SIZE];
-
 void hud_init(void)
 {
-    spr_preshift(ps_hud_heart, spr_heart);
+    /* Hearts are byte-aligned in the HUD, so they do not need a 128-byte
+     * pre-shift table. Kept as a hook for symmetry with sprite init. */
 }
 
 void put_attr(u8 row, u8 col, u8 v)
@@ -46,8 +44,11 @@ void hud_draw_lives(u8 lives)
     }
     for (i = 0; i < lives && i < 8u; i++) {
         u8 x = (u8)(8u + i * 8u);
-        spr_draw(SCLD_SCREEN_A, x, 0, ps_hud_heart);
-        spr_draw(SCLD_SCREEN_B, x, 0, ps_hud_heart);
+        u8 bx = (u8)(x >> 3);
+        for (r = 0; r < 8u; r++) {
+            scld_scanline(SCLD_SCREEN_A, r)[bx] = spr_heart[r];
+            scld_scanline(SCLD_SCREEN_B, r)[bx] = spr_heart[r];
+        }
     }
 }
 
