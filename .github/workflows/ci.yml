@@ -38,7 +38,7 @@ jobs:
           docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest
           make all CHECK_ZX128_LAYOUT=:
       - name: Validate ZX128 memory layout
-        run: tools/check_zx128_layout.py build/game-zx128.map
+        run: tools/check_zx128_layout.py build/aw-1-0-zx128k.map
       - name: Upload TAP artifact
         uses: actions/upload-artifact@v4
         with:

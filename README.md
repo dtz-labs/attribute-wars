@@ -17,11 +17,13 @@ which is exactly where the magic happens.
 
 Binary releases are published on the
 [GitHub Releases page](https://github.com/dtz-labs/attribute-wars/releases).
+Download the 1.0 TAP bundle directly:
+[attribute-wars-v1.0.0-taps.zip](https://github.com/dtz-labs/attribute-wars/releases/download/v1.0.0/attribute-wars-v1.0.0-taps.zip).
 Each release ZIP contains these TAP files:
 
-- `game.tap` - Timex TC2048 / TC2068 / TS2068 build
-- `game-zx128.tap` - ZX Spectrum 128K / +2 build
-- `game-zx48.tap` - ZX Spectrum 48K build
+- `aw-1.0-zx48k.tap` - ZX Spectrum 48K build
+- `aw-1.0-zx128k.tap` - ZX Spectrum 128K / +2 build
+- `aw-1.0-timex.tap` - Timex TC2048 / TC2068 / TS2068 build
 
 Load the TAP file that matches your machine or emulator.
 

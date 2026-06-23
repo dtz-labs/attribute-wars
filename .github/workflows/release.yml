@@ -25,24 +25,30 @@ jobs:
           make all CHECK_ZX128_LAYOUT=:
 
       - name: Validate ZX128 memory layout
-        run: tools/check_zx128_layout.py build/game-zx128.map
+        run: tools/check_zx128_layout.py build/aw-1-0-zx128k.map
 
       - name: Package TAP files
         run: |
           set -eu
           mkdir -p dist
           zip -j "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip" \
-            build/game.tap \
-            build/game-zx128.tap \
-            build/game-zx48.tap
+            build/aw-1.0-zx48k.tap \
+            build/aw-1.0-zx128k.tap \
+            build/aw-1.0-timex.tap
           unzip -l "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip"
 
-      - name: Create GitHub release
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "Attribute Wars ${GITHUB_REF_NAME}" \
-            --notes "Binary TAP files for Attribute Wars ${GITHUB_REF_NAME}." \
-            --verify-tag
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.zip \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Attribute Wars ${GITHUB_REF_NAME}" \
+              --notes "Binary TAP files for Attribute Wars ${GITHUB_REF_NAME}." \
+              --verify-tag
+          fi
