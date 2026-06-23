@@ -13,13 +13,15 @@
 ; A hit (|bx-ex|<8 AND |by-ey|<8) clears enemy.alive + bullet.active, ++kills,
 ; and ends that bullet (one bullet kills at most one enemy).
 ;
-; Inputs via globals (C wrapper): _cbe_bs, _cbe_es. Output: _cbe_kills.
+; Inputs via globals (C wrapper): _cbe_bs, _cbe_es.
+; Outputs: _cbe_kills and _cbe_kill_mask (bit N = enemy slot N died).
 
         SECTION code_user
         PUBLIC  _collide_asm
         EXTERN  _cbe_bs         ; bullets_t* (-> b[0])
         EXTERN  _cbe_es         ; enemies_t* (-> e[0])
         EXTERN  _cbe_kills      ; u8 out: number of hits
+        EXTERN  _cbe_kill_mask  ; u8 out: destroyed enemy slots
 
 SPR_SIZE equ 8
 
@@ -27,6 +29,7 @@ _collide_asm:
         push    ix
         xor     a
         ld      (_cbe_kills),a          ; kills = 0
+        ld      (_cbe_kill_mask),a      ; kill_mask = 0
         ld      hl,(_cbe_bs)            ; bullet 0
         call    do_bullet
         ld      hl,(_cbe_bs)
@@ -54,6 +57,7 @@ do_bullet:
 
         ld      ix,(_cbe_es)           ; e[0]
         ld      b,6                    ; MAX_ENEMIES (see C guard)
+        ld      c,1                    ; current enemy bit
         ld      de,6                   ; enemy stride (add ix,de keeps DE)
 db_inner:
         ld      a,(ix+5)               ; alive?
@@ -80,9 +84,13 @@ db_dyp:
         ld      a,(_cbe_kills)
         inc     a
         ld      (_cbe_kills),a         ; kills++
+        ld      a,(_cbe_kill_mask)
+        or      c
+        ld      (_cbe_kill_mask),a     ; mark this enemy slot
         ret                            ; this bullet is spent (break)
 db_cont:
         add     ix,de                  ; -> next enemy
+        sla     c                      ; next enemy bit
         djnz    db_inner
         ret                            ; no enemy hit
 
