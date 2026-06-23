@@ -43,8 +43,7 @@
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
 #include "hud.h"           /* put_attr, HUD widgets (ATTR macro is in types.h) */
 #include "bgpat.h"         /* per-run background shapes */
-#include "fxtab.h"         /* fx_sin -- game-over plasma renderer */
-#include "plasma.h"        /* plasma_field/palette + PLA_* */
+#include "plasma.h"        /* game-over plasma field/palette */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
 #include <string.h>       /* memset (game-over fills) */
@@ -408,69 +407,89 @@ static void hud_dash_dot(u8 dash_cd)
                                : ATTR(1, 3, 7)));     /* frame: charging  */
 }
 
-/* Game-over plasma: write the field into BOTH attribute planes so the same
- * binary degrades automatically -- a Timex shows the 8x1 plane (smooth), a
- * 128K/48K shows the 8x8 plane (chunky). A separable precompute keeps the
- * 6144-cell fill affordable on the otherwise-idle game-over loop. */
+/* ---- game-over text helpers (BOTH bitmaps, so it shows on whichever page is
+ * front -- the game-over screen never page-flips). ---- */
+static void put_text_both(u8 col, u8 row, const char *s)
+{
+    put_text(SCLD_SCREEN_A, col, row, s);
+    put_text(SCLD_SCREEN_B, col, row, s);
+}
+
+static void put_score_both(u8 col, u8 row, const score_t *s)
+{
+    u8 i;
+    for (i = 0; i < 6u; i++) {
+        u8 ch = (u8)('0' + s->digits[i]);
+        put_char(SCLD_SCREEN_A, (u8)(col + i), row, ch);
+        put_char(SCLD_SCREEN_B, (u8)(col + i), row, ch);
+    }
+}
+
+/* Two-digit wave (waves never exceed 16) into both bitmaps. */
+static void put_wave_both(u8 col, u8 row, u8 w)
+{
+    u8 t = (u8)('0' + (w / 10u) % 10u);
+    u8 o = (u8)('0' + (w % 10u));
+    put_char(SCLD_SCREEN_A, col, row, t);          put_char(SCLD_SCREEN_B, col, row, t);
+    put_char(SCLD_SCREEN_A, (u8)(col + 1), row, o); put_char(SCLD_SCREEN_B, (u8)(col + 1), row, o);
+}
+
+/* Game-over plasma: a STATIC interference field whose colours are cycled by
+ * `phase` (palette rotation -> shimmer in place, no scroll). 8x8 standard
+ * attributes (768 cells) into BOTH blocks -> cheap, smooth, and portable to any
+ * machine. Dark papers keep the white text readable. The field is computed once
+ * (it never changes); only the colour cycle animates. */
 static void plasma_render(u8 phase)
 {
-    static s8 sinx[32];
-    static s8 siny[192];
-    static s8 sind[223];          /* x+y in 0..222 */
-    u8  x, y;
-    u16 s;
-    u8  ph2 = (u8)(phase + 64u);
+    static u8  init = 0u;
+    static s16 field[768];
+    u8 *a = (u8 *)SCLD_ATTRS_A;
+    u8 *b = (u8 *)SCLD_ATTRS_B;
+    u16 i;
 
-    for (x = 0; x < 32u; x++)  sinx[x] = fx_sin[(u8)(x * PLA_KX + phase)];
-    for (y = 0; y < 192u; y++) siny[y] = fx_sin[(u8)(y * PLA_KY + phase)];
-    for (s = 0; s < 223u; s++) sind[s] = fx_sin[(u8)((u8)s * PLA_KD + ph2)];
-
-    for (y = 0; y < 192u; y++) {
-        u8 *hc   = scld_scanline(0x6000u, (u8)y);   /* 8x1 attr row (Timex)     */
-        u8 *cell = ((u8)(y & 7u) == 0u)              /* 8x8 block row (fallback) */
-                   ? ((u8 *)SCLD_ATTRS_A + (u16)(y >> 3) * 32u) : (u8 *)0;
-        s8 sy = siny[y];
-        for (x = 0; x < 32u; x++) {
-            s16 v = (s16)sinx[x] + (s16)sy + (s16)sind[(u8)(x + (u8)y)];
-            u8  a = plasma_palette(v);
-            hc[x] = a;
-            if (cell) { cell[x] = a; }
+    if (!init) {
+        u8 x, y;
+        i = 0u;
+        for (y = 0; y < 24u; y++) {
+            for (x = 0; x < 32u; x++, i++) {
+                field[i] = plasma_field(x, y);
+            }
         }
+        init = 1u;
+    }
+
+    for (i = 0; i < 768u; i++) {
+        u8 c = plasma_palette(field[i], phase);
+        a[i] = c;
+        b[i] = c;
     }
 }
 
 /*
  * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
- * player died on over an animated plasma, and waits for a choice:
+ * player died on over a shimmering dark plasma, and waits for a choice:
  *   FIRE / SPACE -> resume from the death wave  (returns 0)
  *   Q            -> fresh game from wave 1       (returns 1)
- * Text lives in the 0x4000 bitmap (screen A) only; the screen runs in Timex
- * hi-color so 0x6000 is the 8x1 colour map (NOT a second bitmap). The plasma
- * keeps ink=white so the text reads. Caller does the game_state reset + re-init.
+ * Text is drawn into BOTH bitmaps; the plasma cycles BOTH attribute blocks each
+ * frame (standard 8x8, ink stays white so text reads). We never page-flip here.
+ * Caller does the game_state reset + re-init.
  */
 static u8 game_over_screen(const game_state_t *g, u8 death_wave)
 {
     u8 phase = 0u;
-    u8 i;
 
     game_over_flash();
 
-    /* Draw text into screen A ONLY (in hi-color, 0x6000 is colour, not pixels). */
     scld_clear(SCLD_SCREEN_A);
-    put_text(SCLD_SCREEN_A, 11,  6, "GAME OVER");
-    put_text(SCLD_SCREEN_A,  7, 10, "SCORE");
-    for (i = 0; i < 6u; i++) {
-        put_char(SCLD_SCREEN_A, (u8)(13u + i), 10u, (u8)('0' + g->score.digits[i]));
-    }
-    put_text(SCLD_SCREEN_A,  7, 12, "WAVE");
-    put_char(SCLD_SCREEN_A, 13u, 12u, (u8)('0' + (death_wave / 10u) % 10u));
-    put_char(SCLD_SCREEN_A, 14u, 12u, (u8)('0' + (death_wave % 10u)));
-    put_text(SCLD_SCREEN_A,  3, 17, "FIRE/SPACE  RESUME WAVE");
-    put_char(SCLD_SCREEN_A, 27u, 17u, (u8)('0' + (death_wave / 10u) % 10u));
-    put_char(SCLD_SCREEN_A, 28u, 17u, (u8)('0' + (death_wave % 10u)));
-    put_text(SCLD_SCREEN_A,  3, 19, "Q           NEW GAME");
-
-    scld_hicolor_on();
+    scld_clear(SCLD_SCREEN_B);
+    put_text_both(11,  6, "GAME OVER");
+    put_text_both( 7, 10, "SCORE");
+    put_score_both(13, 10, &g->score);
+    put_text_both( 7, 12, "WAVE");
+    put_wave_both(13, 12, death_wave);
+    put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
+    put_wave_both(27, 17, death_wave);
+    put_text_both( 3, 19, "Q           NEW GAME");
 
     for (;;) {
         intent_t in;
@@ -480,11 +499,9 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
         /* CONTINUE on the FIRE button or SPACE (FIRE maps to BOOST or
          * fire-in-heading depending on scheme), plus SPACE directly. */
         if (in.boost || in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
-            scld_hicolor_off();
             return 0u;                 /* resume from the death wave, score 0 */
         }
         if (in_key_pressed(IN_KEY_SCANCODE_q)) {
-            scld_hicolor_off();
             return 1u;                 /* fresh game */
         }
         scld_wait();
