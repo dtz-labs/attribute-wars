@@ -285,11 +285,9 @@ static void death_anim(u8 px, u8 py)
          * -- a loud crackle every expansion frame. */
         sfx_noise();
         sfx_noise();
-        scld_wait();
-        music_tick();                                           /* keep music alive */
+        scld_wait();                                            /* music ticks from the IM2 ISR */
         if (f >= (u8)(maxR - 1u)) {
             scld_wait();                                        /* brief hold full */
-            music_tick();
         }
     }
 }
@@ -331,7 +329,7 @@ static void game_over_flash(void)
         memset((u8 *)SCLD_ATTRS_A, v, SCLD_ATTRS_LEN);
         memset((u8 *)SCLD_ATTRS_B, v, SCLD_ATTRS_LEN);
         d = 6;
-        while (d--) { scld_wait(); music_tick(); }
+        while (d--) scld_wait();        /* music ticks from the IM2 ISR */
     }
 }
 
@@ -468,8 +466,7 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
         if (in_key_pressed(IN_KEY_SCANCODE_q)) {
             return 1u;                 /* fresh game */
         }
-        scld_wait();
-        music_tick();                  /* music continues on the game-over screen */
+        scld_wait();                   /* music continues from the IM2 ISR */
     }
 }
 
@@ -581,8 +578,7 @@ static u8 title_screen(void)
         else if (in_key_pressed(IN_KEY_SCANCODE_3)) sel = CTRL_DUAL_STICK;
         else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
 
-        scld_wait();
-        music_tick();                  /* keep the menu tune running */
+        scld_wait();                   /* menu tune ticks from the IM2 ISR */
     }
     return sel;
 }
@@ -893,7 +889,7 @@ int main(void)
 
         fx_render();                  /* animate enemy-hit colour pops (attrs) */
         scld_present();               /* HALT to 50 Hz, then page-flip */
-        music_tick();                 /* advance the AY tune one frame */
+        /* music is driven by the 50 Hz IM2 ISR -- no per-frame tick here */
     }
     /* never reached */
 }

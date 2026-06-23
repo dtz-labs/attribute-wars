@@ -24,6 +24,7 @@
         PUBLIC  _pt3_init               ; void pt3_init(void): load+init the tune
         PUBLIC  _pt3_play_safe          ; void pt3_play_safe(void): IY-safe play
         PUBLIC  _pt3_mute               ; void pt3_mute(void): silence the AY
+        PUBLIC  _music_im2_init          ; void music_im2_init(void): switch to IM2
         PUBLIC  asm_vt_hardware_out     ; override of z88dk's 128K-only output
         PUBLIC  asm_vt_hardware_out_A0
 
@@ -32,6 +33,7 @@
         EXTERN  asm_VT_PLAY             ; vendored player: play one frame
         EXTERN  asm_VT_MUTE             ; vendored player: silence all channels
         EXTERN  _spectrumizer_pt3       ; tune.asm: the PT3 module (label = addr)
+        EXTERN  _music_tick             ; C: play one frame + decay SFX (ISR calls it)
 
         ; channel-C sound-effect state (music.c); overlaid by sfx_merge below
         EXTERN  _asfx_vol               ; u8  0=inactive, else amplitude 1..15
@@ -284,3 +286,73 @@ _pt3_mute:
         pop     iy
         pop     ix
         ret
+
+; ===========================================================================
+; IM2 interrupt-driven music. Ticking the player from the 50 Hz frame interrupt
+; (not the main loop) keeps the tune at exact tempo no matter how long a frame's
+; work takes -- the death explosion, a multi-frame screen clear, a busy wave.
+; The interrupt fires during those blocking sections and plays a music frame
+; right there, so the main loop no longer needs to call music_tick at all.
+;
+; The 257-byte IM2 vector table + the jump-to-handler live in the UNUSED RAM hole
+; after screen A's attributes (0x5800-0x5AFF end; screen B starts at 0x6000), so
+; they cost zero program/stack space and the sprite blitter never touches them.
+;   table : 257 bytes of 0x5C at 0x5B00            -> I = 0x5B
+;   vector: the CPU reads I*256 + (floating bus 0xFF) = the word at 0x5BFF = 0x5C5C
+;   0x5C5C: JP isr_main
+; Only set up when an AY is present (music_init); a beeper-only machine keeps the
+; ROM's IM1 handler unchanged.
+; ===========================================================================
+IM2_TABLE equ 0x5B00            ; 256-aligned, in the screen-A RAM hole
+IM2_FILL  equ 0x5C              ; table fill byte -> vector IM2_FILL*256+IM2_FILL
+IM2_VEC   equ 0x5C5C            ; = IM2_FILL*256 + IM2_FILL
+
+; void music_im2_init(void) -- build the IM2 table + jump, switch IM1 -> IM2.
+_music_im2_init:
+        di
+        ld      hl,IM2_TABLE            ; fill 257 bytes with IM2_FILL
+        ld      de,IM2_TABLE+1
+        ld      bc,256
+        ld      (hl),IM2_FILL
+        ldir
+        ld      a,0xC3                  ; JP isr_main at the vector address
+        ld      (IM2_VEC),a
+        ld      hl,isr_main
+        ld      (IM2_VEC+1),hl
+        ld      a,IM2_TABLE >> 8        ; I = high byte of the table (0x5B)
+        ld      i,a
+        im      2
+        ei
+        ret
+
+; isr_main -- the 50 Hz handler. Saves EVERYTHING the interrupted code or the
+; player could rely on: the main set, IX, IY (sdcc_iy frame pointer), and the
+; ALTERNATE bank (the PT3 player uses EXX). Then ticks the music and RETIs.
+isr_main:
+        push    af
+        push    bc
+        push    de
+        push    hl
+        push    ix
+        push    iy
+        ex      af,af'
+        push    af
+        exx
+        push    bc
+        push    de
+        push    hl
+        call    _music_tick             ; play one frame + decay SFX (no-op if !on)
+        pop     hl
+        pop     de
+        pop     bc
+        exx
+        pop     af
+        ex      af,af'
+        pop     iy
+        pop     ix
+        pop     hl
+        pop     de
+        pop     bc
+        pop     af
+        ei
+        reti

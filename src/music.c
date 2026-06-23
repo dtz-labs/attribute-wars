@@ -22,6 +22,7 @@ extern u8   ay_detect(void);            /* probe AY + latch the port scheme    *
 extern void pt3_init(void);             /* load the tune + reset to the start  */
 extern void pt3_play_safe(void);        /* play one frame (IY-safe)            */
 extern void pt3_mute(void);             /* silence all channels                */
+extern void music_im2_init(void);       /* IM1 -> IM2: the ISR drives the player */
 
 static u8 music_on;     /* 1 once an AY is detected */
 
@@ -54,6 +55,7 @@ u8 music_init(void)
         return 0;                       /* beeper-only machine -> stay silent */
     }
     pt3_init();                         /* hand the player the module, reset */
+    music_im2_init();                   /* drive the player from the 50 Hz ISR */
     return 1;
 }
 
