@@ -468,11 +468,17 @@ static void plasma_render(u8 phase)
     }
 }
 
+/* game_over_screen return codes. */
+#define GO_RESUME  0u   /* FIRE      -> resume from the death wave   */
+#define GO_NEWGAME 1u   /* SPACE     -> fresh game from wave 1       */
+#define GO_MENU    2u   /* any key   -> back to the title menu       */
+
 /*
  * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
  * player died on over a shimmering dark plasma, and waits for a choice:
- *   FIRE / SPACE -> resume from the death wave  (returns 0)
- *   Q            -> fresh game from wave 1       (returns 1)
+ *   FIRE          -> resume from the death wave  (GO_RESUME)
+ *   SPACE         -> fresh game from wave 1       (GO_NEWGAME)
+ *   any other key -> back to the title menu       (GO_MENU)
  * Text is drawn into BOTH bitmaps; the plasma cycles BOTH attribute blocks each
  * frame (standard 8x8, ink stays white so text reads). We never page-flip here.
  * Caller does the game_state reset + re-init.
@@ -490,9 +496,10 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
     put_score_both(13, 10, &g->score);
     put_text_both( 7, 12, "WAVE");
     put_wave_both(13, 12, death_wave);
-    put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
-    put_wave_both(27, 17, death_wave);
-    put_text_both( 3, 19, "Q           NEW GAME");
+    put_text_both( 4, 16, "FIRE    RESUME WAVE ");
+    put_wave_both(24, 16, death_wave);
+    put_text_both( 4, 18, "SPACE   NEW GAME");
+    put_text_both( 4, 20, "ANY KEY MAIN MENU");
 
     plasma_build(g_entropy);          /* this run's plasma, shaped by play */
 
@@ -501,13 +508,15 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
         plasma_render(phase);
         phase++;
         input_read(DIR_NONE, &in);    /* scheme-agnostic read */
-        /* CONTINUE on the FIRE button or SPACE (FIRE maps to BOOST or
-         * fire-in-heading depending on scheme), plus SPACE directly. */
-        if (in.boost || in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
-            return 0u;                 /* resume from the death wave, score 0 */
+        /* FIRE (joystick fire, or the scheme's fire keys) resumes the wave. */
+        if (in.boost || in.fire) {
+            return GO_RESUME;
         }
-        if (in_key_pressed(IN_KEY_SCANCODE_q)) {
-            return 1u;                 /* fresh game */
+        if (in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
+            return GO_NEWGAME;         /* SPACE -> fresh game from wave 1 */
+        }
+        if (in_inkey() != 0) {
+            return GO_MENU;            /* any other key -> back to the title menu */
         }
         scld_wait();
     }
@@ -823,13 +832,18 @@ int main(void)
                         g.lives--;
                     }
                     if (g.lives == 0u) {
-                        /* ---- GAME OVER (spec §7): show score + wave, then offer
-                         * FIRE/SPACE resume-from-death-wave or Q fresh game. ---- */
+                        /* ---- GAME OVER (spec §7): FIRE resumes the death wave,
+                         * SPACE starts a fresh game, any other key returns to the
+                         * title menu (re-picking the control scheme). ---- */
                         u8 death_wave = g.wave;
-                        if (game_over_screen(&g, death_wave) == 0u) {
+                        u8 choice = game_over_screen(&g, death_wave);
+                        if (choice == GO_RESUME) {
                             game_resume_from_wave(&g, death_wave);  /* score 0, keep wave */
-                        } else {
+                        } else if (choice == GO_NEWGAME) {
                             game_new(&g);                            /* wave 1     */
+                        } else {                                     /* GO_MENU    */
+                            input_set_scheme(title_screen());        /* back to menu */
+                            game_new(&g);                            /* then fresh */
                         }
                         bg_new_run();    /* fresh background for the new/resumed game */
                     } else {
