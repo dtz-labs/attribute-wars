@@ -108,6 +108,7 @@ $(BUILD):
 $(TIMEX_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN) tools/check_zx_stack_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-timex
 	cd $(BUILD)/obj-timex && $(ZCC_BASE) \
+		-DAW_TIMEX_SPRITE_SCRATCH \
 		-pragma-define:REGISTER_SP=$(STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(MUSIC_ASM_ABS) \
 		-o $(ROOT)/$(TIMEX_CODE_BASE) -create-app -m

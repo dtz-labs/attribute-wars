@@ -49,7 +49,7 @@
 #define INVULN_FRAMES 50u /* ~1s of i-frames after a hit (ship blinks)         */
 #define BORDER_BLACK 0u
 #define BORDER_RED   2u
-#define BORDER_FLASH_FRAMES 8u
+#define BORDER_FLASH_FRAMES 4u
 
 /* Max objects drawn in one frame: player + enemies + bullets + muzzle flash. */
 #define MAX_DRAW (1u + MAX_ENEMIES + MAX_BULLETS + 1u)
@@ -105,6 +105,18 @@ static u8     prevn[2];
 #define ps_ship_dir ((u8 *)(uintptr_t)ZX128_SCRATCH_BASE)
 #define ps_enemy    ((u8 *)(uintptr_t)(ZX128_SCRATCH_BASE + 8u * SPR_PRESHIFT_SIZE))
 #define PS_SHIP_DIR(d_) (ps_ship_dir + (u16)(d_) * SPR_PRESHIFT_SIZE)
+#elif defined(AW_TIMEX_SPRITE_SCRATCH)
+/* Timex standard display uses screen B through 0x7AFF. AY IM2 uses 0x7B00
+ * and vector 0x7C7C, leaving 0x7D00..0x7FFF as safe scratch RAM. Park the
+ * five enemy pre-shift tables there to keep all enemy art while freeing BSS. */
+#define TIMEX_SPRITE_SCRATCH_BASE 0x7D00u
+#define ps_enemy         ((u8 *)(uintptr_t)TIMEX_SPRITE_SCRATCH_BASE)
+#define ps_enemy_vbounce ((u8 *)(uintptr_t)(TIMEX_SPRITE_SCRATCH_BASE + SPR_PRESHIFT_SIZE))
+#define ps_enemy_hbounce ((u8 *)(uintptr_t)(TIMEX_SPRITE_SCRATCH_BASE + 2u * SPR_PRESHIFT_SIZE))
+#define ps_enemy_chase   ((u8 *)(uintptr_t)(TIMEX_SPRITE_SCRATCH_BASE + 3u * SPR_PRESHIFT_SIZE))
+#define ps_enemy_hunter  ((u8 *)(uintptr_t)(TIMEX_SPRITE_SCRATCH_BASE + 4u * SPR_PRESHIFT_SIZE))
+static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
+#define PS_SHIP_DIR(d_) ps_ship_dir[(d_)]
 #else
 static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
 static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer (all-dir) */
@@ -414,17 +426,19 @@ static void telegraph_clear(const enemies_t *es)
 /* The top-border lives/shields HUD now lives in hud.c
  * (hud_draw_lives / hud_draw_shields). */
 
-/* Whole-screen red/white flash on GAME OVER (attributes only). */
+/* Whole-screen red/white flash on GAME OVER, with the ULA border in sync. */
 static void game_over_flash(void)
 {
     u8 k, d;
     for (k = 0; k < 8u; k++) {
         u8 v = (k & 1u) ? ATTR(1, 2, 0) : ATTR(1, 7, 0);
+        z80_outp(0xFEu, (k & 1u) ? BORDER_RED : 7u);
         memset((u8 *)SCLD_ATTRS_A, v, SCLD_ATTRS_LEN);
         memset((u8 *)SCLD_ATTRS_B, v, SCLD_ATTRS_LEN);
         d = 6;
         while (d--) scld_wait();        /* music ticks from the IM2 ISR */
     }
+    z80_outp(0xFEu, BORDER_BLACK);
 }
 
 /* ---- title screen: game name, control-scheme menu, copyright ----
@@ -1041,7 +1055,14 @@ main_menu:
             }
         }
 
-        /* ---- render into the hidden buffer ---- */
+        /* ---- render into the hidden buffer ----
+         * ZX48 has no hidden buffer, so wait for the frame interrupt just before
+         * erase+draw. That puts visible writes as early in the frame as this
+         * single-buffer path can manage, reducing the erased-sprite blink window.
+         * Timex/ZX128 keep the normal draw-then-HALT page flip below. */
+#ifdef ZX48_SINGLE_BUFFER
+        scld_wait();
+#endif
         back = scld_back();
         bi   = scld_back_page();
 
@@ -1128,7 +1149,9 @@ main_menu:
         }
 
         border_tick();
+#ifndef ZX48_SINGLE_BUFFER
         scld_present();                 /* HALT to 50 Hz, then page-flip */
+#endif
         /* music is driven by the 50 Hz IM2 ISR -- no per-frame tick here */
     }
     /* never reached */

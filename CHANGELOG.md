@@ -21,6 +21,12 @@
 - Arena backgrounds now rotate per new game between checker, dark-blue diagonal
   stripes, and dark-blue grid patterns.
 - Added a red ULA border flash on enemy hits, player hits, and player death.
+- Shortened the red hit border flash and synchronized the GAME OVER flash with
+  the ULA border.
+- Moved Timex enemy pre-shift sprite tables into the free post-screen scratch
+  area, preserving distinct enemy sprites while increasing stack margin.
+- Timed the ZX48 single-buffer gameplay render to start immediately after the
+  frame interrupt, reducing the visible erase/redraw blink window.
 - The ZX128 title screen drops the moving shine effect to preserve stack margin.
 
 ## [1.1] - 2026-06-23
