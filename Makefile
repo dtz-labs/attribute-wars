@@ -9,7 +9,7 @@ endif
 
 ROOT := $(CURDIR)
 BUILD := build
-VERSION ?= 1.0
+VERSION ?= 1.1
 
 Z88DK_HOME ?= $(HOME)/Programowanie/z88dk
 ifneq ($(wildcard $(Z88DK_HOME)/bin/zcc),)

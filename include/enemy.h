@@ -46,7 +46,7 @@ typedef struct {
     u8 x, y;      /* top-left pixel position           */
     s8 dx, dy;    /* velocity (-2..+2); bouncers use -1/0/+1 */
     u8 level;     /* ENEMY_BOUNCE / CHASE / HUNTER      */
-    u8 alive;     /* 0 = empty; chasers use 2->1 hit points */
+    u8 alive;     /* 0 = empty; chasers use 3->2->1 hit points */
 } enemy_t;
 
 typedef struct {
@@ -63,6 +63,9 @@ void enemies_jump_wounded_chasers(enemies_t *es, u8 wound_mask);
 
 /* Random hunter death bonus: spawn up to two hunter clones near a kill site. */
 u8 enemies_spawn_hunter_clones(enemies_t *es, u8 x, u8 y);
+
+/* Random chaser death bonus: spawn up to two bouncer clones near a kill site. */
+u8 enemies_spawn_bouncer_clones(enemies_t *es, u8 x, u8 y);
 
 /* Returns the pattern used in the last enemies_spawn call (for tests). */
 u8 enemy_last_pattern(void);

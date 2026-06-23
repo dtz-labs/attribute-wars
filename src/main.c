@@ -582,7 +582,7 @@ static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
 
     put_text(SCLD_SCREEN_A,  9,  3, "ATTRIBUTE WARS");
-    put_text(SCLD_SCREEN_A,  5,  4, "version 1.0 (20260623)");
+    put_text(SCLD_SCREEN_A,  5,  4, "version 1.1");
     put_text(SCLD_SCREEN_A,  2,  7, "CONTROLS");
     put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
     put_text(SCLD_SCREEN_A,  2,  9, "2 KEYS MOVE  KEMPSTON FIRE");
@@ -828,6 +828,15 @@ main_menu:
                                                           &kill_mask, &wound_mask);
                     bullet_count = bullets_count(&bullets);
                     if (wound_mask) {
+                        /* Spawn hit effects at the wounded positions BEFORE they jump */
+                        enemy_t *ew = enemies.e;
+                        u8 wbit = 1u;
+                        for (i = MAX_ENEMIES; i != 0u; i--, ew++) {
+                            if (wound_mask & wbit && ew->alive) {
+                                fx_spawn(ew->x, ew->y);
+                            }
+                            wbit = (u8)(wbit << 1);
+                        }
                         enemies_jump_wounded_chasers(&enemies, wound_mask);
                         sfx_play(SFX_HIT);
                     }
@@ -866,6 +875,13 @@ main_menu:
                                 (rng_byte() & 1u)) {
                                 enemy_count = (u8)(enemy_count +
                                     enemies_spawn_hunter_clones(&enemies,
+                                                               killed_x[i], killed_y[i]));
+                            }
+                            if (killed_level[i] == ENEMY_CHASE &&
+                                enemy_count <= (u8)(MAX_ENEMIES - 2u) &&
+                                (rng_byte() & 1u)) {
+                                enemy_count = (u8)(enemy_count +
+                                    enemies_spawn_bouncer_clones(&enemies,
                                                                killed_x[i], killed_y[i]));
                             }
                         }

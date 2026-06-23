@@ -96,7 +96,7 @@ u8 collide_bullets_enemies_masks(bullets_t *bs, enemies_t *es,
             }
             b->active = 0;          /* bullet consumed */
             if (e->level == ENEMY_CHASE && e->alive > 1u) {
-                e->alive = 1u;      /* wounded chaser: next hit kills */
+                e->alive--;         /* wounded chaser: 3->2, 2->1, next hit kills */
                 wounds = (u8)(wounds | bit);
             } else {
                 e->alive = 0;       /* enemy destroyed */
