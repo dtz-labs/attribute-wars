@@ -17,13 +17,12 @@ which is exactly where the magic happens.
 
 Binary releases are published on the
 [GitHub Releases page](https://github.com/dtz-labs/attribute-wars/releases).
-Download the latest TAP bundle directly:
-[attribute-wars-v1.1.0-taps.zip](https://github.com/dtz-labs/attribute-wars/releases/download/v1.1.0/attribute-wars-v1.1.0-taps.zip).
+Download the latest TAP bundle from that page.
 Each release ZIP contains these TAP files:
 
-- `aw-1.1-zx48k.tap` - ZX Spectrum 48K build
-- `aw-1.1-zx128k.tap` - ZX Spectrum 128K / +2 build
-- `aw-1.1-timex.tap` - Timex TC2048 / TC2068 / TS2068 build
+- `aw-*-zx48k.tap` - ZX Spectrum 48K build
+- `aw-*-zx128k.tap` - ZX Spectrum 128K / +2 build
+- `aw-*-timex.tap` - Timex TC2048 / TC2068 / TS2068 build
 
 Load the TAP file that matches your machine or emulator.
 
@@ -33,12 +32,12 @@ GitHub READMEs cannot embed the JSSpeccy 3 JavaScript emulator directly, but
 you can play the Spectrum builds in a browser:
 
 1. Open [JSSpeccy 3](https://jsspeccy.zxdemo.org/).
-2. Download
-   [attribute-wars-v1.0.0-taps.zip](https://github.com/dtz-labs/attribute-wars/releases/download/v1.0.0/attribute-wars-v1.0.0-taps.zip).
-3. In JSSpeccy 3, open the ZIP and select `aw-1.0-zx48k.tap` or
-   `aw-1.0-zx128k.tap`.
+2. Download the latest TAP bundle from the
+   [GitHub Releases page](https://github.com/dtz-labs/attribute-wars/releases).
+3. In JSSpeccy 3, open the ZIP and select `aw-*-zx48k.tap` or
+   `aw-*-zx128k.tap`.
 
-Use `aw-1.0-timex.tap` in a Timex-capable emulator such as ZEsarUX.
+Use `aw-*-timex.tap` in a Timex-capable emulator such as ZEsarUX.
 
 ## Build And Test
 
@@ -49,13 +48,13 @@ make test
 
 Full build and emulator notes are in [docs/build.md](docs/build.md).
 
-## Version 1.0 Targets
+## Supported Targets
 
 | Computer | Video | Sound | Joysticks |
 |---|---|---|---|
 | Timex TC2048 | Timex SCLD double buffering | beeper; AY if an expansion is selected by the player | keyboard / Kempston-style schemes |
 | Timex TC2068 / TS2068 | Timex SCLD double buffering | AY-3-8910 music + FX | two native Timex joystick ports |
-| ZX Spectrum 128K / +2 | 128K shadow-screen double buffering | beeper in the current 1.0 page-flip TAP; the machine has AY, but the bundled PT3 player/tune needs a banked layout before it can ship with this renderer | Sinclair 1/2 joystick ports on +2 |
+| ZX Spectrum 128K / +2 | 128K shadow-screen double buffering | beeper in the current page-flip TAP; the machine has AY, but the bundled PT3 player/tune needs a banked layout before it can ship with this renderer | Sinclair 1/2 joystick ports on +2 |
 | ZX Spectrum 48K | single-buffered display | beeper | keyboard / Sinclair-style schemes |
 
 The ZX Spectrum 48K version flickers like crazy. That is expected: the machine

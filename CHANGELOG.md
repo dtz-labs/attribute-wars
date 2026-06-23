@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.1] - 2026-06-23
+
+### Fixed
+- Fixed Timex/ZX48 startup memory layout by moving the runtime stack to the top
+  of RAM and deduplicating enemy clone spawn code.
+- Added Timex/ZX48 stack layout checks so CI fails before a TAP can return to
+  BASIC from insufficient stack gap.
+- README now links to the general GitHub Releases page instead of hardcoding a
+  specific release asset.
+- The title-screen version now comes from the same Makefile `VERSION` value that
+  names the TAP files.
+
+### Changed
+- Release ZIP packaging now orders Spectrum TAPs before the Timex TAP, so browser
+  emulators that auto-pick the first ZIP entry start with a Spectrum-compatible
+  build.
+
 ## [1.1] - 2026-06-23
 
 ### Changed

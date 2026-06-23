@@ -72,6 +72,17 @@
  * (a player reaching ~200 endless waves never needs the counter to overflow). */
 #define WAVE_MAX 200u
 
+#define AW_STR_1(x) #x
+#define AW_STR(x) AW_STR_1(x)
+
+#if !defined(APP_VERSION_STR) && defined(APP_VERSION_MAJOR) && defined(APP_VERSION_MINOR) && defined(APP_VERSION_PATCH)
+#define APP_VERSION_STR AW_STR(APP_VERSION_MAJOR) "." AW_STR(APP_VERSION_MINOR) "." AW_STR(APP_VERSION_PATCH)
+#elif !defined(APP_VERSION_STR) && defined(APP_VERSION_MAJOR) && defined(APP_VERSION_MINOR)
+#define APP_VERSION_STR AW_STR(APP_VERSION_MAJOR) "." AW_STR(APP_VERSION_MINOR)
+#elif !defined(APP_VERSION_STR)
+#define APP_VERSION_STR "dev"
+#endif
+
 #define KIND_SPRITE 0u   /* full 8x8 sprite (player, enemy) */
 #define KIND_BULLET 1u   /* cheap 3x3 dot                   */
 typedef struct { u8 x, y, kind; } cell_t;
@@ -582,7 +593,7 @@ static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
 
     put_text(SCLD_SCREEN_A,  9,  3, "ATTRIBUTE WARS");
-    put_text(SCLD_SCREEN_A,  5,  4, "version 1.1");
+    put_text(SCLD_SCREEN_A,  5,  4, "version " APP_VERSION_STR);
     put_text(SCLD_SCREEN_A,  2,  7, "CONTROLS");
     put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
     put_text(SCLD_SCREEN_A,  2,  9, "2 KEYS MOVE  KEMPSTON FIRE");

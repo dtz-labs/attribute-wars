@@ -14,9 +14,9 @@ C sources, and hand-written Z80 assembly.
 ```sh
 make              # show available targets
 make all          # build every platform TAP in parallel
-make timex        # build Timex TC2048/TC2068 TAP -> build/aw-1.0-timex.tap
-make zx128        # build ZX Spectrum 128K TAP -> build/aw-1.0-zx128k.tap
-make zx48         # build ZX Spectrum 48K TAP -> build/aw-1.0-zx48k.tap
+make timex        # build Timex TC2048/TC2068 TAP -> build/aw-*-timex.tap
+make zx128        # build ZX Spectrum 128K TAP -> build/aw-*-zx128k.tap
+make zx48         # build ZX Spectrum 48K TAP -> build/aw-*-zx48k.tap
 make TARGET=zx128 # same as make zx128
 ```
 
@@ -49,8 +49,8 @@ marker addresses from `build/measure.map` for `z88dk-ticks`.
 
 ## Artifacts
 
-- `build/aw-1.0-zx48k.tap` - ZX Spectrum 48K build
-- `build/aw-1.0-zx128k.tap` - ZX Spectrum 128K / +2 build
-- `build/aw-1.0-timex.tap` - Timex TC2048/TC2068/TS2068 build
+- `build/aw-*-zx48k.tap` - ZX Spectrum 48K build
+- `build/aw-*-zx128k.tap` - ZX Spectrum 128K / +2 build
+- `build/aw-*-timex.tap` - Timex TC2048/TC2068/TS2068 build
 
 All TAP files include the loading screen generated from `assets/loading.png`.

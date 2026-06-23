@@ -32,11 +32,16 @@ jobs:
         # Checkout runs on the host runner (which has Node for the JS action),
         # then the build runs inside the z88dk image. The Makefile skips its
         # local PATH/ZCCCFG export when ~/Programowanie/z88dk is absent and uses
-        # the image's preset toolchain instead. The ZX128 Python layout check
-        # runs in the next step because the z88dk image does not ship python3.
+        # the image's preset toolchain instead. Python layout checks run in the
+        # next steps because the z88dk image does not ship python3.
         run: >
           docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest
-          make all CHECK_ZX128_LAYOUT=:
+          make all CHECK_ZX128_LAYOUT=: CHECK_ZX_STACK_LAYOUT=:
+      - name: Validate ZX stack layout
+        run: |
+          set -eu
+          tools/check_zx_stack_layout.py build/*-timex.map
+          tools/check_zx_stack_layout.py build/*-zx48k.map
       - name: Validate ZX128 memory layout
         run: |
           set -eu

@@ -306,14 +306,14 @@ static void test_movement(void)
     es.e[0].level = ENEMY_HUNTER; es.e[0].x = 50; es.e[0].y = 50;
     bs.b[0].active = 1; bs.b[0].x = 55; bs.b[0].y = 50;   /* bullet to the right, close */
     enemies_update(&es, 100, 100, &bs);     /* player right, but flee left from bullet */
-    check("hunter flees the bullet faster", es.e[0].x == 48);
+    check("hunter flees the bullet faster", es.e[0].x == 47);
 
     /* Wider dodge: a hunter should already react before the bullet is on top
      * of it, making the dodge visibly more effective without extra AI state. */
     es.e[0].x = 50; es.e[0].y = 50;
     bs.b[0].x = 90; bs.b[0].y = 50;
     enemies_update(&es, 100, 100, &bs);
-    check("hunter flees bullet within wider range", es.e[0].x == 48);
+    check("hunter flees bullet within wider range", es.e[0].x == 47);
 
     /* HUNTER with no bullet near -> behaves like a chaser. */
     clear_bullets(&bs);

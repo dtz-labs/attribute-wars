@@ -311,25 +311,7 @@ void enemies_jump_wounded_chasers(enemies_t *es, u8 wound_mask)
     }
 }
 
-static u8 spawn_hunter_clone(enemies_t *es, u8 x, u8 y)
-{
-    enemy_t *e = es->e;
-    u8 i;
-    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
-        if (!e->alive) {
-            e->x = x;
-            e->y = y;
-            e->dx = (s8)0;
-            e->dy = (s8)0;
-            e->level = ENEMY_HUNTER;
-            e->alive = 1u;
-            return 1u;
-        }
-    }
-    return 0u;
-}
-
-static u8 spawn_bouncer_clone(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
+static u8 spawn_clone(enemies_t *es, u8 x, u8 y, u8 level, u8 alive, s8 dx, s8 dy)
 {
     enemy_t *e = es->e;
     u8 i;
@@ -339,12 +321,22 @@ static u8 spawn_bouncer_clone(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
             e->y = y;
             e->dx = dx;
             e->dy = dy;
-            e->level = ENEMY_BOUNCE;
-            e->alive = 1u;
+            e->level = level;
+            e->alive = alive;
             return 1u;
         }
     }
     return 0u;
+}
+
+static u8 spawn_hunter_clone(enemies_t *es, u8 x, u8 y)
+{
+    return spawn_clone(es, x, y, ENEMY_HUNTER, 1u, (s8)0, (s8)0);
+}
+
+static u8 spawn_bouncer_clone(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
+{
+    return spawn_clone(es, x, y, ENEMY_BOUNCE, 1u, dx, dy);
 }
 
 u8 enemies_spawn_hunter_clones(enemies_t *es, u8 x, u8 y)
@@ -373,20 +365,7 @@ u8 enemies_spawn_bouncer_clones(enemies_t *es, u8 x, u8 y)
 /* Chaser split logic (Timex/ZX48 only - ZX128 too memory-constrained) */
 static u8 spawn_chaser_clone(enemies_t *es, u8 x, u8 y)
 {
-    enemy_t *e = es->e;
-    u8 i;
-    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
-        if (!e->alive) {
-            e->x = x;
-            e->y = y;
-            e->dx = (s8)0;
-            e->dy = (s8)0;
-            e->level = ENEMY_CHASE;
-            e->alive = 3u;  /* chasers now start with 3 hit points */
-            return 1u;
-        }
-    }
-    return 0u;
+    return spawn_clone(es, x, y, ENEMY_CHASE, 3u, (s8)0, (s8)0);
 }
 
 u8 enemies_spawn_chaser_clones(enemies_t *es, u8 x, u8 y)

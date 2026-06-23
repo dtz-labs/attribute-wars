@@ -9,16 +9,28 @@ endif
 
 ROOT := $(CURDIR)
 BUILD := build
-VERSION ?= 1.1
-
-Z88DK_HOME ?= $(HOME)/Programowanie/z88dk
-ifneq ($(wildcard $(Z88DK_HOME)/bin/zcc),)
-export PATH := $(Z88DK_HOME)/bin:$(PATH)
-export ZCCCFG := $(Z88DK_HOME)/lib/config
+VERSION ?= 1.1.1
+VERSION_WORDS := $(subst ., ,$(VERSION))
+VERSION_MAJOR := $(word 1,$(VERSION_WORDS))
+VERSION_MINOR := $(word 2,$(VERSION_WORDS))
+VERSION_PATCH := $(word 3,$(VERSION_WORDS))
+VERSION_DEFINES := -DAPP_VERSION_MAJOR=$(VERSION_MAJOR) -DAPP_VERSION_MINOR=$(VERSION_MINOR)
+ifneq ($(strip $(VERSION_PATCH)),)
+VERSION_DEFINES += -DAPP_VERSION_PATCH=$(VERSION_PATCH)
 endif
 
-ZCC ?= zcc
-APPMAKE ?= z88dk-appmake
+Z88DK_HOME ?= $(HOME)/Programowanie/z88dk
+Z88DK_BIN ?= $(Z88DK_HOME)/bin
+ifneq ($(wildcard $(Z88DK_BIN)),)
+export PATH := $(Z88DK_BIN):$(PATH)
+endif
+ifneq ($(wildcard $(Z88DK_HOME)/lib/config),)
+ZCCCFG ?= $(Z88DK_HOME)/lib/config
+export ZCCCFG
+endif
+
+ZCC ?= $(if $(wildcard $(Z88DK_BIN)/zcc),$(Z88DK_BIN)/zcc,zcc)
+APPMAKE ?= $(if $(wildcard $(Z88DK_BIN)/z88dk-appmake),$(Z88DK_BIN)/z88dk-appmake,z88dk-appmake)
 ZESARUX ?= /Applications/ZEsarUX.app/Contents/MacOS/zesarux
 ZESARUX_DIR := $(dir $(ZESARUX))
 
@@ -39,10 +51,14 @@ COMMON_C_ABS := $(addprefix $(ROOT)/,$(COMMON_C))
 COMMON_ASM_ABS := $(addprefix $(ROOT)/,$(COMMON_ASM))
 MUSIC_ASM_ABS := $(addprefix $(ROOT)/,$(MUSIC_ASM))
 
-ZCC_BASE := $(ZCC) +zx -SO3 -clib=sdcc_iy -startup=31 -iquote$(ROOT)/include
+ZCC_BASE := $(ZCC) +zx -SO3 -clib=sdcc_iy -startup=31 -iquote$(ROOT)/include \
+	$(VERSION_DEFINES)
 APPMAKE_TAP = $(APPMAKE) +zx --binfile $(1)_CODE.bin --org $(ORG) \
 	--output $(2) --screen $(LOADING_SCREEN) --clearaddr $(CLEARADDR) --usraddr $(USRADDR)
 CHECK_ZX128_LAYOUT ?= tools/check_zx128_layout.py
+CHECK_ZX_STACK_LAYOUT ?= tools/check_zx_stack_layout.py
+STACK_TOP := 65535
+ZX128_STACK_TOP := 49152
 TAP_PREFIX := aw-$(VERSION)
 CODE_PREFIX := aw-$(subst .,-,$(VERSION))
 TIMEX_CODE_BASE := $(BUILD)/$(CODE_PREFIX)-timex
@@ -89,11 +105,13 @@ zx48: $(ZX48_TAP)
 $(BUILD):
 	mkdir -p $@
 
-$(TIMEX_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN) | $(BUILD)
+$(TIMEX_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN) tools/check_zx_stack_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-timex
 	cd $(BUILD)/obj-timex && $(ZCC_BASE) \
+		-pragma-define:REGISTER_SP=$(STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(MUSIC_ASM_ABS) \
-		-o $(ROOT)/$(TIMEX_CODE_BASE) -create-app
+		-o $(ROOT)/$(TIMEX_CODE_BASE) -create-app -m
+	$(CHECK_ZX_STACK_LAYOUT) $(TIMEX_CODE_BASE).map
 	$(call APPMAKE_TAP,$(TIMEX_CODE_BASE),$@)
 	rm -f $(TIMEX_CODE_BASE).tap
 	ls -l $@
@@ -103,7 +121,7 @@ $(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm $(HEADERS) $(LOADING_
 	cd $(BUILD)/obj-zx128 && $(ZCC_BASE) \
 		-DZX128_PAGE_FLIP -DZX_SINCLAIR_DUAL_STICK -DZX128_NO_MUSIC \
 		-Ca-DZX128_PAGE_FLIP \
-		-pragma-define:REGISTER_SP=49152 \
+		-pragma-define:REGISTER_SP=$(ZX128_STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(ROOT)/src/zx128_page.asm \
 		-o $(ROOT)/$(ZX128_CODE_BASE) -create-app -m
 	$(CHECK_ZX128_LAYOUT) $(ZX128_CODE_BASE).map
@@ -111,12 +129,14 @@ $(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm $(HEADERS) $(LOADING_
 	rm -f $(ZX128_CODE_BASE).tap
 	ls -l $@
 
-$(ZX48_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN) | $(BUILD)
+$(ZX48_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN) tools/check_zx_stack_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-zx48
 	cd $(BUILD)/obj-zx48 && $(ZCC_BASE) \
 		-DZX48_SINGLE_BUFFER -DZX_SINCLAIR_DUAL_STICK \
+		-pragma-define:REGISTER_SP=$(STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(MUSIC_ASM_ABS) \
-		-o $(ROOT)/$(ZX48_CODE_BASE) -create-app
+		-o $(ROOT)/$(ZX48_CODE_BASE) -create-app -m
+	$(CHECK_ZX_STACK_LAYOUT) $(ZX48_CODE_BASE).map
 	$(call APPMAKE_TAP,$(ZX48_CODE_BASE),$@)
 	rm -f $(ZX48_CODE_BASE).tap
 	ls -l $@

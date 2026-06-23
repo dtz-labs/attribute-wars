@@ -22,7 +22,13 @@ jobs:
       - name: Compile TAP files with z88dk
         run: >
           docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest
-          make all CHECK_ZX128_LAYOUT=:
+          make all CHECK_ZX128_LAYOUT=: CHECK_ZX_STACK_LAYOUT=:
+
+      - name: Validate ZX stack layout
+        run: |
+          set -eu
+          tools/check_zx_stack_layout.py build/*-timex.map
+          tools/check_zx_stack_layout.py build/*-zx48k.map
 
       - name: Validate ZX128 memory layout
         run: |
@@ -35,7 +41,7 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
-          tap_files=(build/*.tap)
+          tap_files=(build/*-zx48k.tap build/*-zx128k.tap build/*-timex.tap)
           test "${#tap_files[@]}" -eq 3
           zip -j "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip" \
             "${tap_files[@]}"
