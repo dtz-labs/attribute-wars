@@ -543,10 +543,9 @@ static u8 title_screen(void)
     put_text(SCLD_SCREEN_A,  2, 10, "2 KEYS MOVE  KEMPSTON FIRE");
     put_text(SCLD_SCREEN_A,  2, 12, "3 TWO JOYSTICKS (TS2068)");
     put_text(SCLD_SCREEN_A,  2, 15, "0 START GAME");
-    /* Music credit + memorial. The AY tune "Spectrumizer" is by Pator, who has
-     * sadly passed away -- R.I.P. (Plays only on AY machines; the credit shows
-     * on every machine.) */
-    put_text(SCLD_SCREEN_A,  5, 18, "MUSIC: PATOR  -  R.I.P.");
+    /* Music credit. The AY tune "Spectrumizer" is by Pator (@paatorr on X).
+     * (Plays only on AY machines; the credit shows on every machine.) */
+    put_text(SCLD_SCREEN_A,  3, 18, "MUSIC: PATOR  @PAATORR ON X");
     put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
     put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
 

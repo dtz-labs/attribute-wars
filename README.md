@@ -85,7 +85,7 @@ runtime. The beeper-only TC2048 stays silent (with its beeper SFX as always); no
 machine is left worse off.
 
 The tune is **"Spectrumizer" by Pator** ([ZX-Art](https://zxart.ee/eng/authors/p/pator/spectrumizer/),
-Lost Party 2023). Pator has sadly passed away — **R.I.P., and thank you for the music.**
+Lost Party 2023). Find Pator at **@paatorr on X** — thank you for the music.
 
 Playback uses Sergey Bulba's Vortex Tracker II PT3 player (vendored from z88dk),
 ticked once per frame from the main loop; the beeper SFX (`sfx.asm`) are untouched
