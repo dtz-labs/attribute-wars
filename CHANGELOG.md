@@ -11,11 +11,17 @@
   specific release asset.
 - The title-screen version now comes from the same Makefile `VERSION` value that
   names the TAP files.
+- Fixed background restore after hit effects so explosions no longer leave
+  permanent marks on the active arena pattern.
 
 ### Changed
 - Release ZIP packaging now orders Spectrum TAPs before the Timex TAP, so browser
   emulators that auto-pick the first ZIP entry start with a Spectrum-compatible
   build.
+- Arena backgrounds now rotate per new game between checker, dark-blue diagonal
+  stripes, and dark-blue grid patterns.
+- Added a red ULA border flash on enemy hits, player hits, and player death.
+- The ZX128 title screen drops the moving shine effect to preserve stack margin.
 
 ## [1.1] - 2026-06-23
 

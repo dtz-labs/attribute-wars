@@ -1,7 +1,7 @@
 /*
  * hud.c -- minimal HUD widgets (target-only draw). See hud.h.
  *
- * The background (checker + frame) is owned by main.c (bg_attr/bg_paint); this
+ * The background (generated floor + frame) is owned by main.c (bg_attr/bg_paint); this
  * module only draws the overlay widgets: hearts + shield dots on the top border,
  * and the timer + dash bars on the bottom border. The score itself is text,
  * drawn by main.c (it has the put_char text routine and the game state).

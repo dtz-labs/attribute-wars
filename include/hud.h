@@ -1,7 +1,7 @@
 /*
  * hud.h -- on-screen HUD for the Timex twin-stick shooter (target-only draw).
  *
- * Minimal HUD drawn on the arena frame (the background is the checker + frame
+ * Minimal HUD drawn on the arena frame (the background is the generated floor + frame
  * painted by main.c's bg_attr/bg_paint -- the HUD does NOT own the background):
  *   - top border (row 0):    lives as hearts (left) + shields as dots (right),
  *                            bitmap sprites into BOTH display files;

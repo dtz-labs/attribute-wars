@@ -22,9 +22,9 @@
  *
  * All hardware (port 0xFF, screen/attr addresses) lives in scld.c; the loop only
  * asks for the back buffer, blits into it, and presents. The score-digit
- * background uses dark paper on lit cells so the white-ink sprites stay readable
- * (design D1); every cell-restore path (fx/death/telegraph) asks the HUD for the
- * current background colour so explosions never punch holes in the score.
+ * background uses only black/dark-blue paper with white ink so sprites stay
+ * readable; every cell-restore path (fx/death/telegraph) asks bg_attr() for the
+ * current background colour so explosions never punch holes in the floor.
  */
 
 #include "scld.h"
@@ -47,6 +47,9 @@
 #include <input.h>        /* in_key_pressed + IN_KEY_SCANCODE_* (title/game-over) */
 
 #define INVULN_FRAMES 50u /* ~1s of i-frames after a hit (ship blinks)         */
+#define BORDER_BLACK 0u
+#define BORDER_RED   2u
+#define BORDER_FLASH_FRAMES 8u
 
 /* Max objects drawn in one frame: player + enemies + bullets + muzzle flash. */
 #define MAX_DRAW (1u + MAX_ENEMIES + MAX_BULLETS + 1u)
@@ -58,7 +61,7 @@
 #define PLAYER_START_Y 96u
 
 #ifdef ZX_SINCLAIR_DUAL_STICK
-#define CTRL_DUAL_LABEL "3 SINCLAIR JOYSTICKS"
+#define CTRL_DUAL_LABEL "3 SIN JOY"
 #else
 #define CTRL_DUAL_LABEL "3 TWO JOYSTICKS (TS2068)"
 #endif
@@ -150,20 +153,47 @@ static s8 step_sign(s8 v)
     return 0;
 }
 
+#define BG_CHECKER 0u
+#define BG_DIAGONAL 1u
+#define BG_GRID    2u
+
+static u8 bg_pattern = BG_GRID;
+static u8 border_flash;
+
+static void border_flash_red(void)
+{
+    border_flash = BORDER_FLASH_FRAMES;
+}
+
+static void border_tick(void)
+{
+    if (border_flash) {
+        border_flash--;
+        z80_outp(0xFEu, (border_flash & 1u) ? BORDER_RED : BORDER_BLACK);
+    } else {
+        z80_outp(0xFEu, BORDER_BLACK);
+    }
+}
+
 /* Background attribute for one cell: a bright-magenta frame all the way around
  * the screen (rows 0/23 + cols 0/31), with WHITE ink so the HUD text/sprites
- * drawn on the frame stay readable, over a blue/black checker floor. Used both
- * to paint the arena and to RESTORE a cell after an explosion / telegraph pulse.
- * (put_attr() + the ATTR macro are shared from hud.h.) */
+ * drawn on the frame stay readable, over a black/dark-blue generated floor.
+ * Used both to paint the arena and to RESTORE a cell after an explosion /
+ * telegraph pulse. */
 static u8 bg_attr(u8 row, u8 col)
 {
+    u8 blue;
     if (row == 0u || row == 23u || col == 0u || col == 31u) {
         return ATTR(1, 3, 7);          /* frame: bright magenta, white ink    */
     }
-    if ((u8)((row + col) & 1u)) {
-        return ATTR(0, 1, 7);          /* dark-blue checker                   */
+    if (!bg_pattern) {
+        blue = (u8)((row + col) & 1u);
+    } else if (bg_pattern == BG_GRID) {
+        blue = (u8)(((row & 3u) == 0u) || ((col & 3u) == 0u));
+    } else {
+        blue = (u8)(((u8)(row + col) >> 1) & 1u);
     }
-    return ATTR(0, 0, 7);              /* black checker                       */
+    return ATTR(0, blue, 7);           /* black/dark-blue paper, white ink    */
 }
 
 /* Paint the whole arena into BOTH attribute blocks (identical on both screens,
@@ -343,11 +373,14 @@ static void death_anim(u8 px, u8 py)
          * -- a loud crackle every expansion frame. */
         sfx_noise();
         sfx_noise();
+        z80_outp(0xFEu, (f & 1u) ? BORDER_RED : BORDER_BLACK);
         scld_wait();                                            /* music ticks from the IM2 ISR */
         if (f >= (u8)(maxR - 1u)) {
+            z80_outp(0xFEu, (f & 1u) ? BORDER_BLACK : BORDER_RED);
             scld_wait();                                        /* brief hold full */
         }
     }
+    z80_outp(0xFEu, BORDER_BLACK);
 }
 
 /* ---- spawn telegraph: one quick warning blink where the next wave appears ----
@@ -534,6 +567,7 @@ static void title_attr_row(u8 row, u8 v)
  * then pauses briefly before restarting at "ATTRIBUTE WARS". Attribute writes
  * are title-screen-only, so clarity beats micro-optimising the small row table.
  */
+#ifndef ZX128_PAGE_FLIP
 #define SHINE_ROWS   15u
 #define SHINE_PAUSE  40u
 
@@ -546,6 +580,7 @@ static const u8 shine_col0[SHINE_ROWS] = {
 static const u8 shine_col1[SHINE_ROWS] = {
     22u, 26u,  9u, 27u, 27u, 25u,  6u,  9u, 11u,  5u, 21u, 13u, 25u, 31u, 22u
 };
+#endif
 
 static void title_base_attrs(u8 sel, u8 snd)
 {
@@ -566,6 +601,7 @@ static void title_base_attrs(u8 sel, u8 snd)
     title_attr_row(23, ATTR(0, 0, 7));
 }
 
+#ifndef ZX128_PAGE_FLIP
 static void title_shine(u8 row_idx, u8 col)
 {
     u8 *a = (u8 *)SCLD_ATTRS_A + (u16)shine_row[row_idx] * 32u;
@@ -576,6 +612,7 @@ static void title_shine(u8 row_idx, u8 col)
         a[(u8)(col - 1u)] = ATTR(1, 0, 6); /* yellow trail */
     }
 }
+#endif
 
 /* Draw the menu, poll keys 1/2/3 (controls), 4/5/6 (sound), and 0 (start).
  * AY setup is still deferred on the first title screen; if music is already
@@ -584,9 +621,11 @@ static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
 {
     u8 sel = CTRL_KEMPSTON_MOVE;
     u8 snd = initial_sound;
+#ifndef ZX128_PAGE_FLIP
     u8 shine_i = 0u;
     u8 shine_c = shine_col0[0];
     u8 pause = 0u;
+#endif
 
     scld_show_a();
     scld_clear(SCLD_SCREEN_A);
@@ -612,6 +651,7 @@ static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
 
     for (;;) {
         title_base_attrs(sel, snd);
+#ifndef ZX128_PAGE_FLIP
         title_shine(shine_i, shine_c);
 
         if (pause > 0u) {
@@ -630,6 +670,7 @@ static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
                 pause = SHINE_PAUSE;
             }
         }
+#endif
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
@@ -691,7 +732,7 @@ int main(void)
     static s8 recoil_dy    = 0;
 
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
-    z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
+    z80_outp(0xFEu, BORDER_BLACK);    /* black ULA border (title + arena)       */
     rng_seed(0xACE1u);
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(PS_SHIP_DIR(d), spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
@@ -721,7 +762,8 @@ main_menu:
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
     game_new(&g);                     /* wave 1, score 0, START_LIVES/SHIELDS   */
-    bg_paint();                       /* checker + frame into both attr blocks  */
+    if (++bg_pattern >= 3u) bg_pattern = BG_CHECKER;
+    bg_paint();                       /* floor + frame into both attr blocks    */
     hud_score(&g.score, 1u);          /* full score draw after the clear        */
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
@@ -741,6 +783,7 @@ main_menu:
     recoil_dx = 0;
     recoil_dy = 0;
     boost_was_down = 0u;
+    border_flash = 0u;
     hud_invalidate();                 /* force first widget paint               */
     hud_draw_lives(g.lives);
     hud_draw_shields(g.shields);
@@ -850,6 +893,7 @@ main_menu:
                         }
                         enemies_jump_wounded_chasers(&enemies, wound_mask);
                         sfx_play(SFX_HIT);
+                        border_flash_red();
                     }
                     if (kills) {
                         enemy_t *e = enemies.e;
@@ -906,6 +950,7 @@ main_menu:
                         }
                         if (scored) {
                             hud_score(&g.score, 0u);           /* points landed   */
+                            border_flash_red();
                         }
                     }
                 }
@@ -937,6 +982,7 @@ main_menu:
                 spawn_timer = TELEGRAPH_FRAMES;
             } else if (invuln == 0u && player_hit(player.x, player.y, &enemies)) {
                 fx_spawn(player.x, player.y);        /* hit pop at the ship */
+                border_flash_red();
                 if (g.shields > 0u) {
                     /* ---- a shield absorbs the hit (spec §4/§8): -10 + click ---- */
                     g.shields--;
@@ -971,7 +1017,7 @@ main_menu:
                     }
                     scld_clear(SCLD_SCREEN_A);        /* wipe the death-anim AND the */
                     scld_clear(SCLD_SCREEN_B);        /* GAME OVER text off both pages */
-                    bg_paint();                       /* repaint checker + frame    */
+                    bg_paint();                       /* repaint floor + frame      */
                     hud_score(&g.score, 1u);          /* full score after the clear */
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
@@ -1081,6 +1127,7 @@ main_menu:
             sfx_noise();
         }
 
+        border_tick();
         scld_present();                 /* HALT to 50 Hz, then page-flip */
         /* music is driven by the 50 Hz IM2 ISR -- no per-frame tick here */
     }
