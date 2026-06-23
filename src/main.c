@@ -626,7 +626,7 @@ static void globe_draw(u8 theta)
             u8 b = globe_is_blue(i);
             ((u8 *)(base + scld_row_off[y]))[x >> 3] |= (u8)(0x80u >> (x & 7u));
             if (b) {
-                attr[(u16)(y >> 3) * 32u + (x >> 3)] = ATTR(0, 1, 7);  /* blue dot */
+                attr[(u16)(y >> 3) * 32u + (x >> 3)] = ATTR(0, 0, 1);  /* blue INK dot on black */
             }
             gv_x[page][n] = x; gv_y[page][n] = y; gv_b[page][n] = b;
             n++;
