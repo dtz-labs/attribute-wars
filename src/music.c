@@ -19,6 +19,7 @@
  * and drive it through these parameterless, IY-safe wrappers instead. */
 extern u8   ay_detect(void);            /* probe AY + latch the port scheme    */
 extern u8   ay_default_sound(void);     /* choose title SOUND default          */
+extern u8   ay_machine_status(void);    /* packed machine/AY title status      */
 extern void ay_set_ports_std(void);     /* latch standard 128K AY ports        */
 extern void ay_sfx_out(void);           /* FX-only: emit channel-C state       */
 extern void ay_sfx_mute(void);          /* FX-only: silence channel C          */
@@ -30,6 +31,7 @@ extern void music_im1_init(void);       /* IM2 -> IM1 for BEEPER/menu reset    *
 
 static u8 ay_on;        /* 1 when AY output is enabled for SFX */
 static u8 music_on;     /* 1 when the PT3 tune is playing      */
+static u8 sound_mode = SOUND_BEEPER;
 
 /* ---- AY channel-C sound effects --------------------------------------------
  * State read by the asm_vt_hardware_out merge in music_ay.asm: while asfx_vol>0
@@ -58,8 +60,31 @@ u8 music_default_sound(void)
     return ay_default_sound();
 }
 
+const char *music_status_text(void)
+{
+    switch (ay_machine_status()) {
+        case 0x00u: return "HW ZX48     AY NO";
+        case 0x11u: return "HW ZX128    AY ZX";
+        case 0x02u: return "HW TC2048   AY NO";
+        case 0x23u: return "HW TC2068   AY TIMEX";
+        default:    return "HW UNKNOWN  AY ?";
+    }
+}
+
 u8 music_init(u8 mode)
 {
+    if (mode == sound_mode) {
+        if (mode == SOUND_BEEPER && !ay_on) {
+            return 0u;
+        }
+        if (mode == SOUND_FX && ay_on && !music_on) {
+            return 1u;
+        }
+        if (mode == SOUND_MUSIC_FX && ay_on && music_on) {
+            return 1u;
+        }
+    }
+
     if (ay_on) {
         if (music_on) {
             pt3_mute();
@@ -70,6 +95,7 @@ u8 music_init(u8 mode)
     ay_on = 0u;
     music_on = 0u;
     asfx_vol = 0u;
+    sound_mode = mode;
 
     if (mode == SOUND_BEEPER) {
         music_im1_init();
@@ -124,6 +150,11 @@ u8 music_is_on(void)
     return ay_on;
 }
 
+u8 music_is_playing(void)
+{
+    return music_on;
+}
+
 void music_sfx(u8 id)
 {
     if (!ay_on || id >= SFX_N) {
@@ -150,10 +181,12 @@ void music_sfx_noise(void)
 #else /* host build -- pure no-op (no Z80/AY dependency) */
 
 u8   music_default_sound(void) { return SOUND_BEEPER; }
+const char *music_status_text(void) { return "HW HOST     AY NO"; }
 u8   music_init(u8 mode)    { (void)mode; return 0; }
 void music_tick(void)       { }
 void music_stop(void)       { }
 u8   music_is_on(void)      { return 0; }
+u8   music_is_playing(void) { return 0; }
 void music_sfx(u8 id)       { (void)id; }
 void music_sfx_noise(void)  { }
 

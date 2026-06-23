@@ -27,6 +27,7 @@
         PUBLIC  _music_im2_init          ; void music_im2_init(void): switch to IM2
         PUBLIC  _music_im1_init          ; void music_im1_init(void): switch to IM1
         PUBLIC  _ay_default_sound        ; u8  ay_default_sound(void): menu default
+        PUBLIC  _ay_machine_status       ; u8  ay_machine_status(void): machine|AY
         PUBLIC  _ay_sfx_out              ; void ay_sfx_out(void): FX-only channel C
         PUBLIC  _ay_sfx_mute             ; void ay_sfx_mute(void): silence FX-only C
         PUBLIC  asm_vt_hardware_out     ; override of z88dk's 128K-only output
@@ -141,6 +142,38 @@ ads_music:
         ret
 ads_beeper:
         xor     a                       ; SOUND_BEEPER
+        ld      l,a
+        ret
+
+; u8 ay_machine_status(void) -- packed title-screen hardware status:
+;   low nibble  = machine: 0 ZX48, 1 ZX128, 2 TC2048, 3 TC2068/TS2068
+;   high nibble = AY:      0 none, 1 standard ZX128/Melodik, 2 Timex 2068
+; This follows the same conservative rules as _ay_default_sound: never probe
+; 0xFFFD on a TC2048 because ZEsarUX can false-positive there.
+_ay_machine_status:
+        call    _ay_detect              ; ROM-confirmed 2068?
+        or      a
+        jr      z,ams_not_2068
+        ld      a,0x23                  ; machine=3, AY=2
+        ld      l,a
+        ret
+ams_not_2068:
+        call    scld_present_p
+        or      a
+        jr      z,ams_sinclair
+        ld      a,0x02                  ; machine=2, AY=0
+        ld      l,a
+        ret
+ams_sinclair:
+        call    _ay_set_ports_std
+        call    ay_probe
+        or      a
+        jr      z,ams_zx48
+        ld      a,0x11                  ; machine=1, AY=1
+        ld      l,a
+        ret
+ams_zx48:
+        xor     a                       ; machine=0, AY=0
         ld      l,a
         ret
 

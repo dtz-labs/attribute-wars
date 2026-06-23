@@ -21,6 +21,9 @@
  * TC2068/TS2068 or standard AY -> MUSIC+FX; TC2048 -> BEEPER. */
 u8   music_default_sound(void);
 
+/* Short title-screen hardware summary, e.g. "HW TC2048   AY NO". */
+const char *music_status_text(void);
+
 /* Apply the title-screen SOUND choice. Returns 1 if the AY path is enabled
  * (MUSIC+FX or FX), 0 if the beeper path remains active. */
 u8   music_init(u8 mode);
@@ -39,6 +42,9 @@ void music_stop(void);
 
 /* 1 if the AY SFX path is active (MUSIC+FX or FX), else use the beeper. */
 u8   music_is_on(void);
+
+/* 1 only when the PT3 tune is currently playing. */
+u8   music_is_playing(void);
 
 /* Trigger sound effect `id` (an SFX_* from sfx.h) on AY channel C. */
 void music_sfx(u8 id);

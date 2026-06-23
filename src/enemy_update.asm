@@ -31,12 +31,12 @@ ARENA_T   equ 8
 ARENA_B   equ 176
 LVL_CHASE equ 2
 LVL_HUNT  equ 3
-DODGE     equ 32
+DODGE     equ 48
 
 _enemies_update_asm:
         push    ix
         ld      ix,(_eu_es)     ; ix -> e[0]
-        ld      b,6             ; MAX_ENEMIES
+        ld      b,8             ; MAX_ENEMIES
 eu_loop:
         ld      a,(ix+5)        ; alive?
         or      a
@@ -175,12 +175,14 @@ dt_ady:
         ld      a,(ix+0)        ; ex
         ld      e,(hl)          ; bx
         call    sgn_sub         ; sgn(ex-bx)
+        add     a,a             ; flee 2 px/frame: -1/0/+1 -> -2/0/+2
         ld      c,a
         ld      a,(ix+1)        ; ey
         inc     hl
         ld      e,(hl)          ; by
         dec     hl
         call    sgn_sub         ; sgn(ey-by)
+        add     a,a             ; flee 2 px/frame
         ld      (t_dy),a
         xor     a               ; Z set -> "fled"
         ret

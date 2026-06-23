@@ -163,6 +163,25 @@ static void test_wave0_guard(void)
     check("wave0 spawns wave1 count (4)", alive == 4u);
 }
 
+/* ---- cap: late waves now use all 8 enemy slots ---- */
+static void test_spawn_wave16_cap8(void)
+{
+    enemies_t es;
+    u8 alive = 0u, nc = 0u, nh = 0u, i;
+    rng_seed(0x4444u);
+    enemies_spawn(&es, 16);
+    for (i = 0u; i < MAX_ENEMIES; i++) {
+        if (es.e[i].alive) {
+            alive++;
+            if (es.e[i].level == ENEMY_CHASE) nc++;
+            else if (es.e[i].level == ENEMY_HUNTER) nh++;
+        }
+    }
+    check("wave16 alive==8", alive == 8u);
+    check("wave16 n_chase==1", nc == 1u);
+    check("wave16 n_hunter==7", nh == 7u);
+}
+
 /* ---- in-bounds check over many waves ---- */
 static void test_all_waves_in_bounds(void)
 {
@@ -201,6 +220,39 @@ static void test_axis_bouncer_cap(void)
     }
 }
 
+/* ---- killed chasers split into diagonal bouncers when there is room ---- */
+static void test_chaser_split(void)
+{
+    enemies_t es;
+    u8 i, spawned, alive = 0u, bouncers = 0u;
+    for (i = 0u; i < MAX_ENEMIES; i++) {
+        es.e[i].alive = 0u;
+        es.e[i].level = ENEMY_CHASE;
+    }
+    spawned = enemies_spawn_chaser_splits(&es, 50u, 50u);
+    for (i = 0u; i < MAX_ENEMIES; i++) {
+        if (es.e[i].alive) {
+            alive++;
+            if (es.e[i].level == ENEMY_BOUNCE && es.e[i].dx && es.e[i].dy) {
+                bouncers++;
+            }
+            check("split x in arena", es.e[i].x >= ARENA_L && es.e[i].x <= ARENA_R);
+            check("split y in arena", es.e[i].y >= ARENA_T && es.e[i].y <= ARENA_B);
+        }
+    }
+    check("chaser split spawned 2", spawned == 2u);
+    check("chaser split alive 2", alive == 2u);
+    check("chaser split diagonal bouncers", bouncers == 2u);
+
+    for (i = 0u; i < MAX_ENEMIES; i++) {
+        es.e[i].alive = 1u;
+        es.e[i].level = ENEMY_BOUNCE;
+    }
+    es.e[3].alive = 0u;
+    spawned = enemies_spawn_chaser_splits(&es, 80u, 80u);
+    check("chaser split respects cap", spawned == 1u);
+}
+
 /* ---- movement tests (unchanged from original) ---- */
 static void test_movement(void)
 {
@@ -235,14 +287,14 @@ static void test_movement(void)
     es.e[0].level = ENEMY_HUNTER; es.e[0].x = 50; es.e[0].y = 50;
     bs.b[0].active = 1; bs.b[0].x = 55; bs.b[0].y = 50;   /* bullet to the right, close */
     enemies_update(&es, 100, 100, &bs);     /* player right, but flee left from bullet */
-    check("hunter flees the bullet (moves left)", es.e[0].x == 49);
+    check("hunter flees the bullet faster", es.e[0].x == 48);
 
     /* Wider dodge: a hunter should already react before the bullet is on top
      * of it, making the dodge visibly more effective without extra AI state. */
     es.e[0].x = 50; es.e[0].y = 50;
-    bs.b[0].x = 80; bs.b[0].y = 50;
+    bs.b[0].x = 90; bs.b[0].y = 50;
     enemies_update(&es, 100, 100, &bs);
-    check("hunter flees bullet within wider range", es.e[0].x == 49);
+    check("hunter flees bullet within wider range", es.e[0].x == 48);
 
     /* HUNTER with no bullet near -> behaves like a chaser. */
     clear_bullets(&bs);
@@ -274,8 +326,10 @@ int main(void)
     test_pattern_no_repeat();
     test_wave_loop();
     test_wave0_guard();
+    test_spawn_wave16_cap8();
     test_all_waves_in_bounds();
     test_axis_bouncer_cap();
+    test_chaser_split();
     test_movement();
 
     if (failures == 0) { printf("test_enemy: ALL PASS\n"); return 0; }

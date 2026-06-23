@@ -11,7 +11,8 @@
 #include "arena.h"
 #include "rng.h"
 
-#define DODGE_DIST 32u          /* hunter flees a bullet this close (per axis) */
+#define DODGE_DIST 48u          /* hunter flees a bullet this close (per axis) */
+#define HUNTER_FLEE_SPEED 2     /* fleeing hunters step faster than chasers */
 #define MAX_AXIS_BOUNCERS 2u    /* cap vertical/horizontal bouncers per wave */
 
 #if ENEMY_SPEED != 1
@@ -22,6 +23,7 @@
  * function: sdcc won't inline a static call, and enemies_update calls this 2-4x
  * per enemy -- the call overhead was a big chunk of the logic frame. */
 #define SGN_U8(a, b) ((s8)((a) > (b) ? 1 : ((a) < (b) ? -1 : 0)))
+#define FLEE_STEP(s) ((s8)((s) > 0 ? HUNTER_FLEE_SPEED : ((s) < 0 ? -HUNTER_FLEE_SPEED : 0)))
 
 /* ---- 16-wave difficulty table (spec §5.4) --------------------------------- */
 
@@ -225,11 +227,52 @@ void enemies_spawn(enemies_t *es, u8 wave)
                 e->dy = (s8)0;
             }
         } else {
+            e->x = ARENA_L;
+            e->y = ARENA_T;
+            e->level = ENEMY_BOUNCE;
             e->alive = 0u;
             e->dx = (s8)0;
             e->dy = (s8)0;
         }
     }
+}
+
+static u8 minus8_clamped(u8 v, u8 lo)
+{
+    return (v <= (u8)(lo + 8u)) ? lo : (u8)(v - 8u);
+}
+
+static u8 plus8_clamped(u8 v, u8 hi)
+{
+    return (v >= (u8)(hi - 8u)) ? hi : (u8)(v + 8u);
+}
+
+static u8 spawn_split_bouncer(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
+{
+    enemy_t *e = es->e;
+    u8 i;
+    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
+        if (!e->alive) {
+            e->x = x;
+            e->y = y;
+            e->dx = dx;
+            e->dy = dy;
+            e->level = ENEMY_BOUNCE;
+            e->alive = 1u;
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
+u8 enemies_spawn_chaser_splits(enemies_t *es, u8 x, u8 y)
+{
+    u8 spawned = 0u;
+    spawned = (u8)(spawned + spawn_split_bouncer(es,
+        minus8_clamped(x, ARENA_L), minus8_clamped(y, ARENA_T), (s8)-1, (s8)-1));
+    spawned = (u8)(spawned + spawn_split_bouncer(es,
+        plus8_clamped(x, ARENA_R), plus8_clamped(y, ARENA_B), (s8)1, (s8)1));
+    return spawned;
 }
 
 u8 enemies_any_alive(const enemies_t *es)
@@ -302,8 +345,8 @@ void enemies_update(enemies_t *es, u8 px, u8 py, const bullets_t *bs)
                 by = b->y;
                 ady = (u8)(by > ey ? by - ey : ey - by);
                 if (ady >= DODGE_DIST) continue;
-                dx = SGN_U8(ex, bx);     /* flee the bullet */
-                dy = SGN_U8(ey, by);
+                dx = FLEE_STEP(SGN_U8(ex, bx));     /* flee the bullet */
+                dy = FLEE_STEP(SGN_U8(ey, by));
                 break;
             }
         }
