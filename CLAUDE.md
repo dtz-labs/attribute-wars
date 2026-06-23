@@ -44,6 +44,7 @@ These are real, verified-on-hardware rules — violating them produces crashes o
 - **Never return a struct by value — pass via out-pointer.** SDCC's Z80 backend SIGSEGVs on struct-return-by-value (`make_intent`/`input_read` take `intent_t *out`). It's also faster on Z80.
 - **The input module's header is `controls.h`, not `input.h`.** A header named `input.h` on the include path shadows z88dk's system `<input.h>` (SDCC's `-iquote` still searches it for angle includes). Implementation stays `src/input.c`.
 - **Port `0xFF` is only ever written `0x00` or `0x01`.** Bit 6 is a hardware interrupt kill-switch that software `EI` cannot override — setting it freezes the HALT-paced loop. `scld.c` owns these writes.
+- **ZX Spectrum 128K page flipping is not safe in the current binary.** The 128K shadow screen needs RAM page 7 banked into `0xC000-0xFFFF`, but the AY/music build currently has resident code/data/BSS through `$F7C4` and `SP=$FF58`. Do not add a `0x7FFD` flip until `tools/check_zx128_layout.py build/game.map` passes and the remaining direct `SCLD_SCREEN_*` / `SCLD_ATTRS_*` callers in `main.c` and `hud.c` are abstracted.
 - **Interrupts boot DISABLED.** The z88dk newlib crt starts with DI, so a `HALT` would never wake. `scld_init()` runs `im 1; ei` before the loop — don't bypass it.
 - **Use `z80_outp()` from `<z80.h>`** for port output (`outp()` is undeclared under `sdcc_iy` → implicit-decl bug). Interrupt/HALT primitives come from `<intrinsic.h>`.
 

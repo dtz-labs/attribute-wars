@@ -3,7 +3,33 @@
 **Date:** 2026-06-22
 **Targets:** ZX Spectrum 128K / +2 / +3 (new). Existing: Timex TC2048 (primary), TC2068 / TS2068 (near-free secondary).
 **Toolchain:** Z88DK (`zcc +zx`, `-clib=sdcc_iy`), same as the main build.
-**Status:** Exploratory design. **General by intent** — this spec describes the *shape* of the port (what kind of change it is, what moves and what doesn't, the load-bearing hardware facts and gotchas). It deliberately does **not** name individual routines or prescribe line-level edits; that belongs in a later plan → implementation cycle. Derived from the 2026-06-22 design conversation.
+**Status:** Exploratory design, with a 2026-06-23 implementation gate added. **Do not enable 128K page flipping in the current binary yet**: the AY/music build now occupies the `0xC000-0xFFFF` paging window that the 128K shadow screen needs. This spec describes the *shape* of the port (what kind of change it is, what moves and what doesn't, the load-bearing hardware facts and gotchas). It deliberately does **not** name individual routines or prescribe line-level edits; that belongs in a later plan → implementation cycle. Derived from the 2026-06-22 design conversation and updated after the current z88dk map was measured.
+
+## 0. Current implementation gate (2026-06-23)
+
+The current `feature/ay-music-im2` build is **not safe** for a ZX128 `0x7FFD` page-flip kernel. The measured z88dk map is:
+
+| Region | Current address |
+|---|---|
+| `__CODE_head` | `$8000` |
+| `__CODE_END_tail` | `$EB5C` |
+| `__DATA_head` | `$EB5C` |
+| `__DATA_END_tail` | `$EDAF` |
+| `__BSS_head` | `$EDAF` |
+| `__BSS_END_tail` | `$F7C4` |
+| `__register_sp` | `$FF58` |
+| PT3 tune `_spectrumizer_pt3` | `$C24A` |
+| pre-shift/sprite globals | `$EEFF-$F73A` |
+
+On a ZX Spectrum 128K, drawing into the shadow screen requires mapping RAM page 7 into `0xC000-0xFFFF`. With the current layout, that would evict the PT3 tune/rodata, BSS, sprite state, `scld_row_off`, music state, and the stack. The next interrupt, call, push, sprite draw, or PT3 tick would corrupt memory or crash.
+
+The repo now has a guard for this:
+
+```sh
+tools/check_zx128_layout.py build/game.map
+```
+
+The 128K page-flip kernel may only be enabled after the map passes this check: resident code/data/BSS must end at or below `$C000`, and `SP` must start at or below `$C000` so pushes go downward into fixed RAM. Until then, 128K support is a memory-layout task first, not just a new `scld_present()`.
 
 ---
 
@@ -52,12 +78,14 @@ The last row is what makes the blitter portable: the ZX/Timex standard screen fo
 
 ## 4. What carries over vs. what changes
 
-**Carries over unchanged** (the payoff of the boundary rule):
+**Carries over unchanged after the boundary is made airtight** (the payoff of the boundary rule):
 
 - All **pure-logic modules** — geometry, input/`controls`, player, bullet, enemy, collision, rng. They never touched hardware and stay host-testable.
 - The **blitter** (`sprite.c`, `blit.asm`) and the **pre-shifted sprite data** — they take a base address and draw; the screen format is byte-identical across all targets.
 - The **incremental erase+redraw** scheme (the per-buffer 2-frames-stale `prev[2][…]` dirty list). It assumes exactly **two** buffers, and the 128K shadow screen *is* two buffers — so it maps 1:1.
-- **HUD, score, game-loop orchestration, title screen.** They already speak only through the kernel interface and the SFX API.
+- **HUD, score, game-loop orchestration, title screen.** Intended to speak only through the kernel interface and the SFX API.
+
+2026-06-23 audit note: the boundary is not fully airtight in the current source. `main.c` and `hud.c` still write directly to `SCLD_SCREEN_A`, `SCLD_SCREEN_B`, `SCLD_ATTRS_A`, and `SCLD_ATTRS_B` for title/HUD/static text work. That is fine for the current Timex SCLD target, but it must be abstracted before a runtime-selected 128K kernel can be enabled.
 
 **Changes** (and only these):
 
@@ -101,6 +129,7 @@ These are the 128K equivalents of the foundation spec's §2.1 hardware gotchas �
 
 - ⛔ **Port `0x7FFD` is WRITE-ONLY.** There is no read-back. The kernel **must keep a software shadow copy** of the last value written and modify *that*, never read-modify-write the port. Flipping the screen bit means `shadow ^= bit3; OUT (0x7FFD), shadow` — preserving the ROM-select and RAM-bank bits every time.
 - ⛔ **Banking page 7 into `0xC000` evicts whatever lived there — including the stack.** A `+zx` build normally parks `SP` near `0xFFFF` (the current map shows `__register_sp=$FF58`). The instant page 7 is banked in, that stack memory is gone → the next `push`/`call`/interrupt corrupts or crashes. **The stack (and any hot data/IM handler state) must live at or below `0xBFFF`** for the 128K path. This stack relocation is *the* structural change the port forces.
+- ⛔ **The current AY/music binary violates the fixed-RAM rule.** As of 2026-06-23, `CODE/DATA/BSS` run from `$8000` to `$F7C4`, and `_spectrumizer_pt3` starts at `$C24A`. The old "code fits below `$C000`" assumption is no longer true.
 - ⛔ **Never set bit 5 of `0x7FFD` (paging-disable lock).** Once set it freezes the pager until a hard reset — the back buffer becomes permanently unreachable. The kernel must keep it clear in every write.
 - ⚠ **The performance budget does not transfer.** The 6-enemy cap and all T-state figures were measured on the **TC2048**. On the 128K the screen pages are **contended** (the exact contended-page set varies by model — issue 2/+2 vs +2A/+3), and the shadow buffer at `0xC000` lands on a contended page too, so *both* buffers cost more than the uncontended case. **Re-measure on a 128K before trusting the enemy cap**; it may need to drop.
 - ⚠ **Keep code/data in the always-mapped region.** Code lives at `0x8000–0xBFFF`, which on the 128K default layout is a fixed RAM page (not the `0xC000` paging window and not page 5/7). Nothing static may sit in `0xC000–0xFFFF` on the 128K path. The Timex back-buffer hole (`0x6000–0x7AFF`) stays reserved too (harmless dead space on the 128K).
@@ -124,12 +153,13 @@ The AY work was designed alongside the port and is independent of the rendering 
 
 **Audio:** trivially one binary — the AY port pair is just two runtime variables.
 
-**Video:** one binary is feasible *if and only if* three conditions hold, all already within reach:
-1. Code/data fit in `0x8000–0xBFFF` (they do today: `0x8000–0x94C2`).
-2. The stack is relocated to `≤ 0xBFFF` (the one required change, §6).
-3. The screen kernel is **selected at runtime** by a machine probe, and the Timex back-buffer hole (`0x6000–0x7AFF`) stays reserved (wasted but harmless on the 128K).
+**Video:** one binary is feasible *if and only if* these conditions hold:
+1. Resident code/data/BSS fit below `0xC000` (they do **not** today: the current map ends at `$F7C4`).
+2. The stack is relocated to `≤ 0xC000` so it grows down outside the paging window.
+3. The PT3 tune and any banked assets are either kept below `0xC000` or moved to a non-screen bank with a deliberate loader/player strategy.
+4. The screen kernel is **selected at runtime** by a machine probe, and the Timex back-buffer hole (`0x6000–0x7AFF`) stays reserved or is handled by a separate 128K build.
 
-**Recommended architecture: a single "fat" binary** that, at boot, probes the machine and selects:
+**Recommended architecture once the memory gate passes: a single "fat" binary** that, at boot, probes the machine and selects:
 
 - a **rendering kernel** ∈ { SCLD page-flip (Timex) | shadow-screen paging (128K) | single-buffer fallback (bare 48K, if ever wanted) }, and
 - an **audio path** ∈ { AY @ F5/F6 (2068) | AY @ FFFD/BFFD (128K) | beeper (TC2048/48K) }.
@@ -164,9 +194,9 @@ Exact probe sequences are an implementation concern, intentionally left to the p
 
 Rough sequencing, to size the work, not to prescribe edits:
 
-1. **Confirm the boundary is airtight** — verify nothing outside the kernel touches `0xFF`/`0x4000`/`0x6000`. Fix any leak first; the whole port depends on this.
-2. **Write the 128K shadow-screen kernel** behind the existing interface (§5), with the `0x7FFD` write-only shadow value and bit discipline (§6).
-3. **Relocate the stack** below `0xC000` and adjust the crt/linker config; prove it on both a Timex and a 128K.
+1. **Make the boundary airtight** — remove direct screen/attribute constants from `main.c` and `hud.c`; everything above the kernel must use kernel-provided buffer/attribute bases or helpers.
+2. **Fix the memory layout** — move resident code/data/BSS and the stack out of `0xC000-0xFFFF`, or create a separate 128K banked build/loader. Prove it with `tools/check_zx128_layout.py build/game.map`.
+3. **Write the 128K shadow-screen kernel** behind the existing interface (§5), with the `0x7FFD` write-only shadow value and bit discipline (§6).
 4. **Boot-time detection** selecting kernel + audio path (§8, §9), with conservative fallback.
 5. **Re-measure the budget on a 128K** (contention) and adjust the enemy cap if needed.
 6. **AY driver** with the dual port set + beeper fallback (§7); music content tracked separately.
@@ -182,6 +212,6 @@ The ordering matters: steps 1–3 are the real engineering; 4–6 are additive. 
 | Does the 128K port require a new graphics engine? | **No — a new rendering *kernel*** behind the existing boundary. The engine, blitter, logic, HUD, and loop are reused. |
 | Does the 128K support double buffering? | **Yes**, via the shadow screen (bit 3 of `0x7FFD`); it just lacks a one-bit SCLD-style display mode. |
 | Where's the real work? | The `0x7FFD` shadow kernel, the **stack relocation**, and **re-measuring contention**. |
-| Can it be one binary with the Timex version? | **Yes**, a fat binary with boot-time machine + AY detection and graceful fallback (recommended); separate builds are the fallback option. |
+| Can it be one binary with the Timex version? | **Yes in principle, not with the current map.** The present AY/music binary reaches `$F7C4`, so memory layout/banking work must happen before the 128K kernel is enabled. |
 | Is the AY music feasible across machines? | **Yes** — autodetect the AY port pair (`FFFD/BFFD` vs `F5/F6`), beeper fallback; it also frees frame budget. |
 | What about a bare 48K? | Out of scope — no page-flip, no AY; lowest tier only if ever pursued. |
