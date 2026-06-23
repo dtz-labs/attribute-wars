@@ -41,6 +41,7 @@ MUSIC_ASM_ABS := $(addprefix $(ROOT)/,$(MUSIC_ASM))
 ZCC_BASE := $(ZCC) +zx -SO3 -clib=sdcc_iy -startup=31 -iquote$(ROOT)/include
 APPMAKE_TAP = $(APPMAKE) +zx --binfile $(1)_CODE.bin --org $(ORG) \
 	--output $(2) --screen $(LOADING_SCREEN) --clearaddr $(CLEARADDR) --usraddr $(USRADDR)
+CHECK_ZX128_LAYOUT ?= tools/check_zx128_layout.py
 
 .PHONY: help all target timex zx128 zx48 clean test measure run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48
 
@@ -95,7 +96,7 @@ $(BUILD)/game-zx128.tap: $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm $(HEADERS)
 		-pragma-define:REGISTER_SP=49152 \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(ROOT)/src/zx128_page.asm \
 		-o $(ROOT)/$(BUILD)/game-zx128 -create-app -m
-	tools/check_zx128_layout.py $(BUILD)/game-zx128.map
+	$(CHECK_ZX128_LAYOUT) $(BUILD)/game-zx128.map
 	$(call APPMAKE_TAP,$(BUILD)/game-zx128,$@)
 	ls -l $@
 

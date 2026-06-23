@@ -20,7 +20,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Compile TAP files with z88dk
-        run: docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest make all
+        run: >
+          docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest
+          make all CHECK_ZX128_LAYOUT=:
+
+      - name: Validate ZX128 memory layout
+        run: tools/check_zx128_layout.py build/game-zx128.map
 
       - name: Package TAP files
         run: |

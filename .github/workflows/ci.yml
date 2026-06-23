@@ -32,8 +32,13 @@ jobs:
         # Checkout runs on the host runner (which has Node for the JS action),
         # then the build runs inside the z88dk image. The Makefile skips its
         # local PATH/ZCCCFG export when ~/Programowanie/z88dk is absent and uses
-        # the image's preset toolchain instead.
-        run: docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest make all
+        # the image's preset toolchain instead. The ZX128 Python layout check
+        # runs in the next step because the z88dk image does not ship python3.
+        run: >
+          docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest
+          make all CHECK_ZX128_LAYOUT=:
+      - name: Validate ZX128 memory layout
+        run: tools/check_zx128_layout.py build/game-zx128.map
       - name: Upload TAP artifact
         uses: actions/upload-artifact@v4
         with:
