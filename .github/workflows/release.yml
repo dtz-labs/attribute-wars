@@ -1,0 +1,43 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release TAP binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile TAP files with z88dk
+        run: docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest make all
+
+      - name: Package TAP files
+        run: |
+          set -eu
+          mkdir -p dist
+          zip -j "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip" \
+            build/game.tap \
+            build/game-zx128.tap \
+            build/game-zx48.tap
+          unzip -l "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Attribute Wars ${GITHUB_REF_NAME}" \
+            --notes "Binary TAP files for Attribute Wars ${GITHUB_REF_NAME}." \
+            --verify-tag
