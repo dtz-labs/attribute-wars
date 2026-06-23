@@ -44,6 +44,7 @@
 #include "hud.h"           /* put_attr, HUD widgets (ATTR macro is in types.h) */
 #include "bgpat.h"         /* per-run background shapes */
 #include "plasma.h"        /* game-over plasma field/palette */
+#include "globe.h"         /* title-screen rotating planet */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
 #include <string.h>       /* memset (game-over fills) */
@@ -522,13 +523,15 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
     }
 }
 
-/* Fill one 32-cell attribute row of screen A (title highlights). */
+/* Fill one 32-cell attribute row of BOTH attr blocks (title now page-flips). */
 static void title_attr_row(u8 row, u8 v)
 {
     u8 *a = (u8 *)SCLD_ATTRS_A + (u16)row * 32u;
+    u8 *b = (u8 *)SCLD_ATTRS_B + (u16)row * 32u;
     u8  c;
     for (c = 0; c < 32u; c++) {
         a[c] = v;
+        b[c] = v;
     }
 }
 
@@ -549,19 +552,20 @@ static void title_attr_row(u8 row, u8 v)
  */
 #define SHINE_COL_START  9u   /* first col of "ATTRIBUTE WARS"                 */
 #define SHINE_COL_END   22u   /* last  col of "ATTRIBUTE WARS" (14 chars)      */
-#define SHINE_ROW        3u   /* the title character row                        */
-/* diagonal range: (col+row) for col in [9..22], row=3 → [12..25] */
-#define SHINE_S_MIN     12u   /* (SHINE_COL_START + SHINE_ROW)                 */
-#define SHINE_S_MAX     25u   /* (SHINE_COL_END   + SHINE_ROW)                 */
+#define SHINE_ROW        1u   /* the title character row (moved up for globe)   */
+/* diagonal range: (col+row) for col in [9..22], row=1 → [10..23] */
+#define SHINE_S_MIN     10u   /* (SHINE_COL_START + SHINE_ROW)                 */
+#define SHINE_S_MAX     23u   /* (SHINE_COL_END   + SHINE_ROW)                 */
 #define SHINE_PAUSE     60u   /* frames to hold before restarting the sweep    */
 
-/* Paint the title row attribute cells for the current sweep position. */
+/* Paint the title row attribute cells (BOTH blocks) for the sweep position. */
 static void title_shine(u8 s)
 {
     u8 col;
     u8 *a = (u8 *)SCLD_ATTRS_A + (u16)SHINE_ROW * 32u;
+    u8 *b = (u8 *)SCLD_ATTRS_B + (u16)SHINE_ROW * 32u;
     for (col = SHINE_COL_START; col <= SHINE_COL_END; col++) {
-        u8 diag = (u8)(col + SHINE_ROW);   /* == col + 3 */
+        u8 diag = (u8)(col + SHINE_ROW);
         u8 attr;
         if (diag == s) {
             attr = ATTR(1, 0, 7);          /* BRIGHT WHITE ink — on the glint  */
@@ -571,62 +575,121 @@ static void title_shine(u8 s)
             attr = ATTR(1, 0, 5);          /* bright cyan — base title colour   */
         }
         a[col] = attr;
+        b[col] = attr;
     }
 }
 
-/* Draw the menu, poll keys 1/2/3 (pick a control scheme) and 0 (start).
- * Returns the chosen CTRL_* scheme. */
+/* Latitude colour bands for the planet, one paper per globe cell-row (rows 3..12
+ * map to indices 0..9). Cool blue->cyan->green->cyan->blue gradient; never white
+ * paper (the white dots must read). */
+static u8 globe_band_attr(u8 row)
+{
+    static const u8 paper[10] = { 1u, 1u, 5u, 5u, 4u, 4u, 5u, 5u, 1u, 1u };
+    u8 r = (row >= 3u && row <= 12u) ? (u8)(row - 3u) : 0u;
+    return ATTR(1, paper[r], 7);     /* bright band, white ink */
+}
+
+/* Paint the planet's colour disc into BOTH attr blocks once: cells whose centre
+ * is within R of the globe centre get a latitude band; the rest stay black. */
+static void globe_paint_disc(void)
+{
+    u8 row, col;
+    for (row = 3u; row <= 12u; row++) {
+        for (col = 10u; col <= 21u; col++) {
+            s16 dx = (s16)(col * 8u + 4u) - (s16)GLOBE_CX;
+            s16 dy = (s16)(row * 8u + 4u) - (s16)GLOBE_CY;
+            u8  v  = (dx * dx + dy * dy <= (s16)(GLOBE_R * GLOBE_R))
+                     ? globe_band_attr(row) : ATTR(0, 0, 7);
+            ((u8 *)SCLD_ATTRS_A)[(u16)row * 32u + col] = v;
+            ((u8 *)SCLD_ATTRS_B)[(u16)row * 32u + col] = v;
+        }
+    }
+}
+
+/* Clear the globe's bitmap bounding box in buffer `base` (erase last dots). */
+static void globe_box_clear(u16 base)
+{
+    u8 y;
+    for (y = (u8)(GLOBE_CY - GLOBE_R); y <= (u8)(GLOBE_CY + GLOBE_R); y++) {
+        u8 *row = scld_scanline(base, y);
+        u8  c;
+        for (c = 10u; c <= 21u; c++) {
+            row[c] = 0u;
+        }
+    }
+}
+
+/* Plot the front-facing globe dots into buffer `base` at rotation theta. */
+static void globe_plot(u16 base, u8 theta)
+{
+    u8 i, n = globe_count();
+    for (i = 0; i < n; i++) {
+        if (globe_front(i, theta)) {
+            u8 x = globe_x(i, theta);
+            u8 y = globe_y(i);
+            scld_scanline(base, y)[x >> 3] |= (u8)(0x80u >> (x & 7u));
+        }
+    }
+}
+
+/* Title: a rotating planet over the menu. Double-buffered (the globe animates),
+ * so static text goes into BOTH bitmaps and every attribute write hits BOTH
+ * blocks. Poll keys 1/2/3 (scheme) + 0 (start); returns the chosen CTRL_*. */
 static u8 title_screen(void)
 {
-    u8 sel = CTRL_KEMPSTON_MOVE;
-    /* Sweep state: s is the current diagonal position; pause counts down between
-     * passes. Start s at SHINE_S_MIN so the glint enters from the left edge. */
+    u8 sel   = CTRL_KEMPSTON_MOVE;
     u8 s     = SHINE_S_MIN;
     u8 pause = 0u;
+    u8 theta = 0u;
+
+    globe_init();
 
     scld_clear(SCLD_SCREEN_A);
-    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
+    scld_clear(SCLD_SCREEN_B);
+    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
+    memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
 
-    put_text(SCLD_SCREEN_A,  9,  3, "ATTRIBUTE WARS");
-    put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
-    put_text(SCLD_SCREEN_A,  2, 10, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text(SCLD_SCREEN_A,  2, 12, "3 TWO JOYSTICKS (TS2068)");
-    put_text(SCLD_SCREEN_A,  2, 15, "0 START GAME");
-    put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
-    put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
+    put_text_both( 9,  1, "ATTRIBUTE WARS");
+    put_text_both( 2, 14, "1 KEMPSTON MOVE  KEYS FIRE");
+    put_text_both( 2, 16, "2 KEYS MOVE  KEMPSTON FIRE");
+    put_text_both( 2, 18, "3 TWO JOYSTICKS (TS2068)");
+    put_text_both( 2, 20, "0 START GAME");
+    put_text_both( 3, 22, "(C) 2026 ANTHROPIC, INC.");
+    put_text_both( 3, 23, "(C) 2026 MICHAL PASTERNAK");
 
-    title_attr_row(3, ATTR(1, 0, 5));      /* bright-cyan title (base colour) */
+    globe_paint_disc();                    /* latitude colour bands (both blocks) */
+    title_attr_row(1, ATTR(1, 0, 5));      /* base title colour                   */
 
     for (;;) {
-        /* highlight the selected scheme bright yellow; START is bright green */
-        title_attr_row( 8, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(10, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(12, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(15, ATTR(1, 0, 4));
-
-        /* ---- shine sweep: paint title-letter row (row 3) only --------------- */
+        /* scheme highlight (bright yellow) + START (bright green), both blocks */
+        title_attr_row(14, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(16, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(18, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(20, ATTR(1, 0, 4));
         title_shine(s);
 
-        /* Advance (or pause) the sweep position */
+        /* draw the globe into the hidden buffer, then flip (HALT-paced) */
+        globe_box_clear(scld_back());
+        globe_plot(scld_back(), theta);
+        scld_present();
+        theta = (u8)(theta + 2u);          /* spin speed */
+
+        /* shine sweep advance */
         if (pause > 0u) {
             pause--;
             if (pause == 0u) {
-                s = SHINE_S_MIN;           /* restart the sweep */
+                s = SHINE_S_MIN;
             }
+        } else if (s < SHINE_S_MAX) {
+            s++;
         } else {
-            if (s < SHINE_S_MAX) {
-                s++;
-            } else {
-                pause = SHINE_PAUSE;       /* glint exited right — begin pause  */
-            }
+            pause = SHINE_PAUSE;
         }
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
         else if (in_key_pressed(IN_KEY_SCANCODE_3)) sel = CTRL_DUAL_STICK;
         else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
-
-        scld_wait();
     }
     return sel;
 }
