@@ -23,24 +23,28 @@ attribute-heavy visuals, and hardware page flipping where the machine supports i
 Requires z88dk in `~/Programowanie/z88dk`.
 
 ```sh
-./build.sh        # Timex TC2048/TC2068 build -> build/game.tap
-./build-zx128.sh  # ZX Spectrum 128K build -> build/game-zx128.tap
-./build-zx48.sh   # ZX Spectrum 48K build -> build/game-zx48.tap
+make              # show available targets
+make all          # build all TAPs in parallel
+make timex        # Timex TC2048/TC2068 -> build/game.tap
+make zx128        # ZX Spectrum 128K -> build/game-zx128.tap
+make zx48         # ZX Spectrum 48K -> build/game-zx48.tap
+make TARGET=zx128 # same as make zx128
 ```
 
 The TAP files include the loading screen converted from the original
-`assets/loading.png`.
+`assets/loading.png`. The old `build*.sh` scripts still work as Makefile
+wrappers.
 
 ## Run In ZEsarUX
 
 ```sh
-./run-zesarux-tc2048.sh   # TC2048, beeper default
-./run-zesarux-tc2068.sh   # TC2068, Timex AY
-./run-zesarux-128k.sh     # ZX Spectrum 128K, shadow-screen page flip
-./run-zesarux-48k.sh      # ZX Spectrum 48K, single-buffer flicker
+make run-tc2048   # TC2048, beeper default
+make run-tc2068   # TC2068, Timex AY
+make run-zx128    # ZX Spectrum 128K, shadow-screen page flip
+make run-zx48     # ZX Spectrum 48K, single-buffer flicker
 ```
 
-`./run-zesarux.sh` is the default TC2048 launcher.
+The old `run-zesarux*.sh` scripts still work as Makefile wrappers.
 
 ## Controls
 
@@ -48,7 +52,8 @@ Choose controls on the title screen:
 
 - `1` Kempston move, keyboard fire
 - `2` keyboard move, Kempston fire
-- `3` two joysticks on TS2068/TC2068
+- `3` two joysticks: TS2068/TC2068 in the Timex build, Sinclair 1/2 in the
+  ZX Spectrum builds
 
 Keyboard movement uses `5/6/7/8`. Keyboard fire uses `0` or the 8-way cluster
 `Q W E / A D / Z X C`.

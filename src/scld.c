@@ -1,8 +1,8 @@
 /*
- * scld.c -- Timex SCLD standard-resolution double-buffering (see scld.h).
+ * scld.c -- platform screen-buffer backend (see scld.h).
  *
- * The ONLY translation unit that knows port 0xFF and the 0x4000/0x6000 screen
- * addresses (design boundary rule). Everything above this draws into a
+ * The ONLY translation unit that knows the platform flip hardware and the
+ * screen addresses (design boundary rule). Everything above this draws into a
  * buffer-base it is handed and never touches the hardware directly.
  *
  * Target-only: pulls in z88dk's <z80.h> / <intrinsic.h>. The pure address math
@@ -19,12 +19,9 @@
 #define SCLD_PAGE_A 0x00u     /* show screen A (bits 6-7 = 0)                */
 #define SCLD_PAGE_B 0x01u     /* show screen B (bits 6-7 = 0)                */
 
-#define ZX128_PORT_7FFD 0x7FFDu
-#define ZX128_BANK7     0x07u  /* bits 0..2: map RAM page 7 into 0xC000      */
-#define ZX128_SCREEN_B  0x08u  /* bit 3: display shadow screen/page 7        */
-
 #ifdef ZX128_PAGE_FLIP
-static uint8_t zx128_7ffd;
+extern void zx128_page_show_a(void);
+extern void zx128_page_show_b(void);
 #endif
 
 /* Currently displayed page: 0 = screen A, 1 = screen B. */
@@ -67,8 +64,7 @@ void scld_init(uint8_t attr)
      * clash work and a clean look. In the ZX48 build screen B aliases screen A,
      * so these duplicate writes are intentional and harmless. */
 #ifdef ZX128_PAGE_FLIP
-    zx128_7ffd = ZX128_BANK7;           /* page 7 visible at 0xC000, show page 5 */
-    z80_outp(ZX128_PORT_7FFD, zx128_7ffd);
+    zx128_page_show_a();                /* page 7 at 0xC000, show page 5 */
 #endif
     memset((uint8_t *)SCLD_ATTRS_A, attr, SCLD_ATTRS_LEN);
     memset((uint8_t *)SCLD_ATTRS_B, attr, SCLD_ATTRS_LEN);
@@ -128,8 +124,7 @@ void scld_show_a(void)
 {
     scld_front = 0;
 #ifdef ZX128_PAGE_FLIP
-    zx128_7ffd = ZX128_BANK7;
-    z80_outp(ZX128_PORT_7FFD, zx128_7ffd);
+    zx128_page_show_a();
 #elif !defined(ZX48_SINGLE_BUFFER)
     z80_outp(SCLD_PORT, SCLD_PAGE_A);
 #endif
@@ -140,8 +135,8 @@ void scld_present(void)
     intrinsic_halt();                   /* sync to the 50 Hz frame interrupt   */
 #ifdef ZX128_PAGE_FLIP
     scld_front ^= 1u;
-    zx128_7ffd = (uint8_t)(ZX128_BANK7 | (scld_front ? ZX128_SCREEN_B : 0u));
-    z80_outp(ZX128_PORT_7FFD, zx128_7ffd);
+    if (scld_front) zx128_page_show_b();
+    else            zx128_page_show_a();
 #elif !defined(ZX48_SINGLE_BUFFER)
     scld_front ^= 1u;                   /* the buffer we just drew is now front */
     /* Only ever 0x00 / 0x01 -- bits 6-7 must stay 0 (see scld.h). The flip

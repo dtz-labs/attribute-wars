@@ -80,14 +80,24 @@ static cell_t prev[2][MAX_DRAW];
 static u8     prevn[2];
 
 /* Pre-shifted sprite tables (built once at startup from the 8-byte source art).
- * Bullets/thruster are not sprites -- they use the cheap bul_draw/bul_erase. */
+ * Bullets/thruster are not sprites -- they use the cheap bul_draw/bul_erase.
+ *
+ * The ZX128 page-flip build keeps RAM page 7 mapped at 0xC000. Its display file
+ * uses 0xC000..0xDAFF, leaving 0xDB00..0xFFFF free; park the preshift tables
+ * there so the normal 0x8000..0xBFFF resident area has room for the stack. */
+#ifdef ZX128_PAGE_FLIP
+#define ZX128_SCRATCH_BASE 0xDB00u
+#define ps_ship_dir ((u8 *)(uintptr_t)ZX128_SCRATCH_BASE)
+#define ps_enemy    ((u8 *)(uintptr_t)(ZX128_SCRATCH_BASE + 8u * SPR_PRESHIFT_SIZE))
+#define PS_SHIP_DIR(d_) (ps_ship_dir + (u16)(d_) * SPR_PRESHIFT_SIZE)
+#else
 static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
 static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer (all-dir) */
-#ifndef ZX128_PAGE_FLIP
 static u8 ps_enemy_vbounce[SPR_PRESHIFT_SIZE];  /* level 4 vertical bouncer  */
 static u8 ps_enemy_hbounce[SPR_PRESHIFT_SIZE];  /* level 5 horizontal bouncer*/
 static u8 ps_enemy_chase[SPR_PRESHIFT_SIZE];    /* level 2 chaser  */
 static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
+#define PS_SHIP_DIR(d_) ps_ship_dir[(d_)]
 #endif
 /* (the HUD life-heart pre-shift table now lives in hud.c) */
 
@@ -687,7 +697,7 @@ int main(void)
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
     z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
     rng_seed(0xACE1u);
-    { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
+    { u8 d; for (d = 0; d < 8u; d++) spr_preshift(PS_SHIP_DIR(d), spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
 #ifndef ZX128_PAGE_FLIP
     spr_preshift(ps_enemy_vbounce, spr_enemy_vbounce);
@@ -962,7 +972,7 @@ main_menu:
                         if (sy > 0 && player.y > 0u)         dy = (u8)(player.y - 1u);
                         else if (sy < 0 && player.y < 184u)  dy = (u8)(player.y + 1u);
                     }
-                    SPR_DRAW(back, dx, dy, ps_ship_dir[fdir]);
+                    SPR_DRAW(back, dx, dy, PS_SHIP_DIR(fdir));
                     out->x = dx; out->y = dy;
                     out->kind = KIND_SPRITE; out++; n++;
 
