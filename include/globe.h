@@ -4,9 +4,8 @@
  * constant (Y-rotation only slides it horizontally), so per frame a point costs
  * one cos lookup + one fx_mul.
  *
- * A sparse lat/long grid of white dots; a couple of longitudes are tagged "blue"
- * so they trace two faint blue meridians of dots (the rest stay white). Colour
- * is per 8x8 cell, so each dot's cell is set blue/white accordingly.
+ * A lat/long grid of dots; ~20% are tagged "blue" (scattered, not in lines), the
+ * rest white. Colour is per 8x8 cell, so each dot's cell is set blue/white.
  */
 #ifndef GLOBE_H
 #define GLOBE_H

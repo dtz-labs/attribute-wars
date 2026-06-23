@@ -7,9 +7,9 @@
 #include "fxtab.h"
 
 #define NLAT 9u    /* latitudes -80..80                                  */
-#define NLON 16u   /* longitudes around                                  */
+#define NLON 20u   /* longitudes around                                  */
 #define LAT_STEP 20   /* 160 / (NLAT-1) degrees between latitudes        */
-#define NPTS (NLAT * NLON)   /* 144 */
+#define NPTS (NLAT * NLON)   /* 180 */
 
 static u8 g_cx, g_cy;
 static u8 g_rpix[NPTS];   /* xz-plane radius in pixels (0..r)   */
@@ -39,11 +39,12 @@ void globe_init(u8 cx, u8 cy, u8 r)
         u8  rp     = (u8)fx_mul(cosphi, r);
         u8  sy     = (u8)((s16)cy - fx_mul(sinphi, r));
         for (lo = 0; lo < NLON; lo++, i++) {
+            u8 h = (u8)(i * 37u + 11u);      /* cheap pseudo-random hash */
             g_rpix[i] = rp;
             g_sy[i]   = sy;
             g_lon[i]  = (u8)(lo * (256u / NLON));
-            /* two opposite meridians (longitudes 0 and 180 deg) are blue */
-            g_blue[i] = (lo == 0u || lo == (NLON / 2u)) ? 1u : 0u;
+            /* ~20% of dots scattered blue (the rest white) */
+            g_blue[i] = (h < 51u) ? 1u : 0u;
         }
     }
 }
