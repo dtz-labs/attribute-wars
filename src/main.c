@@ -579,33 +579,6 @@ static void title_shine(u8 s)
     }
 }
 
-/* Latitude colour bands for the planet, one paper per globe cell-row (rows 3..12
- * map to indices 0..9). Cool blue->cyan->green->cyan->blue gradient; never white
- * paper (the white dots must read). */
-static u8 globe_band_attr(u8 row)
-{
-    static const u8 paper[10] = { 1u, 1u, 5u, 5u, 4u, 4u, 5u, 5u, 1u, 1u };
-    u8 r = (row >= 3u && row <= 12u) ? (u8)(row - 3u) : 0u;
-    return ATTR(1, paper[r], 7);     /* bright band, white ink */
-}
-
-/* Paint the planet's colour disc into BOTH attr blocks once: cells whose centre
- * is within R of the globe centre get a latitude band; the rest stay black. */
-static void globe_paint_disc(void)
-{
-    u8 row, col;
-    for (row = 3u; row <= 12u; row++) {
-        for (col = 10u; col <= 21u; col++) {
-            s16 dx = (s16)(col * 8u + 4u) - (s16)GLOBE_CX;
-            s16 dy = (s16)(row * 8u + 4u) - (s16)GLOBE_CY;
-            u8  v  = (dx * dx + dy * dy <= (s16)(GLOBE_R * GLOBE_R))
-                     ? globe_band_attr(row) : ATTR(0, 0, 7);
-            ((u8 *)SCLD_ATTRS_A)[(u16)row * 32u + col] = v;
-            ((u8 *)SCLD_ATTRS_B)[(u16)row * 32u + col] = v;
-        }
-    }
-}
-
 /* Clear the globe's bitmap bounding box in buffer `base` (erase last dots). */
 static void globe_box_clear(u16 base)
 {
@@ -654,10 +627,10 @@ static u8 title_screen(void)
     put_text_both( 2, 16, "2 KEYS MOVE  KEMPSTON FIRE");
     put_text_both( 2, 18, "3 TWO JOYSTICKS (TS2068)");
     put_text_both( 2, 20, "0 START GAME");
-    put_text_both( 3, 22, "(C) 2026 ANTHROPIC, INC.");
-    put_text_both( 3, 23, "(C) 2026 MICHAL PASTERNAK");
+    put_text_both( 5, 21, "\x7F 2026 Claude, Codex,");
+    put_text_both( 5, 22, "idea @mpasternak,");
+    put_text_both( 3, 23, "music by Pator (@paatorr)");
 
-    globe_paint_disc();                    /* latitude colour bands (both blocks) */
     title_attr_row(1, ATTR(1, 0, 5));      /* base title colour                   */
 
     for (;;) {
