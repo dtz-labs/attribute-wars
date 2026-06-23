@@ -10,6 +10,8 @@
 
 #include "types.h"
 
+#define GLOBE_MAXPTS 200u   /* upper bound on globe_count(), for caller arrays */
+
 /* (Re)build the wireframe for a globe centred at (cx,cy) with radius r. */
 void globe_init(u8 cx, u8 cy, u8 r);
 

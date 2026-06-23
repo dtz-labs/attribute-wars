@@ -579,117 +579,135 @@ static void title_shine(u8 s)
     }
 }
 
-/* Globe placement for the two title phases (bitmap-clear box derived from the
- * centre+radius). Attract: big & central. Menu: small, top. */
+/* Globe placement for the two title phases. Attract: big & central. Menu:
+ * medium, top, leaving room for the title + scheme list. The Y0/Y1/C0/C1 box is
+ * cy +/- r in scanlines and (cx +/- r)/8 in byte columns. */
 #define ATTRACT_CX 128u
-#define ATTRACT_CY  88u
-#define ATTRACT_R   60u
-#define ATTRACT_Y0  28u   /* CY-R   */
-#define ATTRACT_Y1 148u   /* CY+R   */
-#define ATTRACT_C0   8u   /* (CX-R)/8 */
-#define ATTRACT_C1  23u   /* (CX+R)/8 */
-
+#define ATTRACT_CY  80u
+#define ATTRACT_R   52u
 #define MENU_CX 128u
-#define MENU_CY  40u
-#define MENU_R   28u
-#define MENU_Y0  12u
-#define MENU_Y1  68u
-#define MENU_C0  12u
-#define MENU_C1  19u
+#define MENU_CY  60u
+#define MENU_R   40u
 
-/* Draw the globe into the back buffer: BOX-CLEAR its bitmap area (so every dot
- * is redrawn from scratch -> guaranteed motion, no accumulation), then plot the
- * front dots white. All globe cells are white-ink/black-paper (set once at title
- * setup), so no per-frame attribute work and the rest of the screen stays black.
- * Uses the precomputed row table for the clear + plot. */
-static void globe_draw(u8 y0, u8 y1, u8 c0, u8 c1, u8 theta)
+/* Incremental dot trails: positions drawn into each buffer last time it was the
+ * back one (2 frames stale), so we erase ONLY those dots, then redraw. Same
+ * proven scheme as the in-game sprite erase -> fast (page-flipped, no box clear)
+ * and the dots visibly translate. */
+static u8 gv_n[2];
+static u8 gv_x[2][GLOBE_MAXPTS];
+static u8 gv_y[2][GLOBE_MAXPTS];
+
+static void globe_reset_trails(void) { gv_n[0] = 0u; gv_n[1] = 0u; }
+
+static void globe_draw(u8 theta)
 {
     u16 base = scld_back();
-    u8  y, c, i, n;
+    u8  page = scld_back_page();
+    u8  i, n, cnt;
 
-    for (y = y0; y <= y1; y++) {
-        u8 *row = (u8 *)(base + scld_row_off[y]);
-        for (c = c0; c <= c1; c++) {
-            row[c] = 0u;
-        }
+    for (i = 0; i < gv_n[page]; i++) {     /* erase this buffer's previous dots */
+        u8 x = gv_x[page][i], y = gv_y[page][i];
+        ((u8 *)(base + scld_row_off[y]))[x >> 3] &= (u8)~(0x80u >> (x & 7u));
     }
 
-    n = globe_count();
-    for (i = 0; i < n; i++) {
+    n   = 0u;
+    cnt = globe_count();
+    for (i = 0; i < cnt; i++) {            /* plot this frame's front dots white */
         if (globe_front(i, theta)) {
-            u8 x  = globe_x(i, theta);
-            u8 yy = globe_y(i);
-            ((u8 *)(base + scld_row_off[yy]))[x >> 3] |= (u8)(0x80u >> (x & 7u));
+            u8 x = globe_x(i, theta);
+            u8 y = globe_y(i);
+            ((u8 *)(base + scld_row_off[y]))[x >> 3] |= (u8)(0x80u >> (x & 7u));
+            gv_x[page][n] = x;
+            gv_y[page][n] = y;
+            n++;
         }
     }
+    gv_n[page] = n;
+}
+
+/* Any key down? Scan the 8 keyboard half-rows directly (bits 0-4 low = pressed)
+ * -- reliable, unlike in_inkey() which didn't register here. */
+static u8 any_key_down(void)
+{
+    static const u8 half[8] = { 0xFEu, 0xFDu, 0xFBu, 0xF7u, 0xEFu, 0xDFu, 0xBFu, 0x7Fu };
+    u8 i;
+    for (i = 0; i < 8u; i++) {
+        u8 v = (u8)z80_inp((u16)(((u16)half[i] << 8) | 0x00FEu));
+        if ((v & 0x1Fu) != 0x1Fu) {
+            return 1u;
+        }
+    }
+    return 0u;
 }
 
 /* Title in two double-buffered phases: an ATTRACT screen with a big spinning
- * planet + "PRESS ANY KEY", then a MENU screen (smaller planet + scheme list).
- * White dots + blue meridian lines on black. Returns the chosen CTRL_* scheme. */
+ * planet + "PRESS ANY KEY" + credits, then a MENU screen (title + planet +
+ * control-scheme list). White wireframe globe on black. Returns CTRL_*. */
 static u8 title_screen(void)
 {
     u8 sel   = CTRL_KEMPSTON_MOVE;
     u8 s     = SHINE_S_MIN;
     u8 pause = 0u;
     u8 theta = 0u;
-    u8 t     = 0u;
     intent_t in;
 
-    /* ---- ATTRACT: big planet + flashing prompt ---- */
+    /* ---- ATTRACT: big planet + steady prompt + credits ---- */
     scld_clear(SCLD_SCREEN_A);
     scld_clear(SCLD_SCREEN_B);
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
     memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
     put_text_both( 9,  1, "ATTRIBUTE WARS");
-    put_text_both( 9, 22, "PRESS ANY KEY");
+    put_text_both( 9, 18, "PRESS ANY KEY");
+    put_text_both( 6, 20, "\x7F 2026 Claude, Codex");
+    put_text_both( 1, 21, "human in the loop: @mpasternak");
+    put_text_both( 8, 22, "music: @paatorr");
     globe_init(ATTRACT_CX, ATTRACT_CY, ATTRACT_R);
-    title_attr_row(1, ATTR(1, 0, 5));
+    globe_reset_trails();
+    title_attr_row(1,  ATTR(1, 0, 5));     /* bright cyan title          */
+    title_attr_row(18, ATTR(1, 0, 6));     /* bright yellow prompt (steady) */
 
     for (;;) {
         title_shine(s);
-        title_attr_row(22, ((t >> 4) & 1u) ? ATTR(1, 0, 7) : ATTR(0, 0, 0));  /* flash */
-        globe_draw(ATTRACT_Y0, ATTRACT_Y1, ATTRACT_C0, ATTRACT_C1, theta);
+        globe_draw(theta);
         scld_present();
-        theta = (u8)(theta + 3u);
-        t++;
+        theta = (u8)(theta + 2u);
         if (pause > 0u) { pause--; if (pause == 0u) s = SHINE_S_MIN; }
         else if (s < SHINE_S_MAX) s++;
         else pause = SHINE_PAUSE;
 
         input_read(DIR_NONE, &in);
-        if (in.fire || in.boost || in_inkey() != 0) break;
+        if (in.fire || in.boost || any_key_down()) break;
     }
 
-    /* ---- MENU: smaller planet + control-scheme list ---- */
+    /* wait for the key to be released so the menu doesn't see it */
+    while (any_key_down()) {
+        globe_draw(theta);
+        scld_present();
+        theta = (u8)(theta + 2u);
+    }
+
+    /* ---- MENU: title + planet + control-scheme list ---- */
     scld_clear(SCLD_SCREEN_A);
     scld_clear(SCLD_SCREEN_B);
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
     memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
-    put_text_both( 2, 10, "1 KEMPSTON MOVE  KEYS FIRE");
-    put_text_both( 2, 12, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text_both( 2, 14, "3 TWO JOYSTICKS (TS2068)");
-    put_text_both( 2, 16, "0 START GAME");
-    put_text_both( 6, 19, "\x7F 2026 Claude, Codex");
-    put_text_both( 1, 20, "human in the loop: @mpasternak");
-    put_text_both( 8, 21, "music: @paatorr");
+    put_text_both( 9,  1, "ATTRIBUTE WARS");
+    put_text_both( 2, 14, "1 KEMPSTON MOVE  KEYS FIRE");
+    put_text_both( 2, 16, "2 KEYS MOVE  KEMPSTON FIRE");
+    put_text_both( 2, 18, "3 TWO JOYSTICKS (TS2068)");
+    put_text_both( 2, 20, "0 START GAME");
     globe_init(MENU_CX, MENU_CY, MENU_R);
-
-    /* wait for the attract key to be released so it doesn't fall through */
-    while (in_inkey() != 0) {
-        globe_draw(MENU_Y0, MENU_Y1, MENU_C0, MENU_C1, theta);
-        scld_present();
-        theta = (u8)(theta + 3u);
-    }
+    globe_reset_trails();
+    title_attr_row(1, ATTR(1, 0, 5));
 
     for (;;) {
-        title_attr_row(10, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(12, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(14, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(16, ATTR(1, 0, 4));
-        globe_draw(MENU_Y0, MENU_Y1, MENU_C0, MENU_C1, theta);
+        title_attr_row(14, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(16, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(18, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(20, ATTR(1, 0, 4));
+        globe_draw(theta);
         scld_present();
-        theta = (u8)(theta + 3u);
+        theta = (u8)(theta + 2u);
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
