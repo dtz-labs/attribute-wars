@@ -6,10 +6,10 @@
 #include "globe.h"
 #include "fxtab.h"
 
-#define NLAT 9u    /* latitudes -80..80                                  */
-#define NLON 12u   /* longitudes around (sparse, so dot motion is clear) */
-#define LAT_STEP 20   /* 160 / (NLAT-1) degrees between latitudes        */
-#define NPTS (NLAT * NLON)   /* 180 */
+#define NLAT 17u   /* latitudes -80..80 (dense -> each meridian is a LINE) */
+#define NLON 8u    /* few longitudes -> distinct meridian lines that sweep */
+#define LAT_STEP 10   /* 160 / (NLAT-1) degrees between latitudes          */
+#define NPTS (NLAT * NLON)   /* 136 */
 
 static u8 g_cx, g_cy;
 static u8 g_rpix[NPTS];   /* xz-plane radius in pixels (0..r)   */
