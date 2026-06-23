@@ -32,28 +32,24 @@ int main(void)
         check("y within bounds", y_ok);
     }
 
-    check("x moves under rotation", globe_x(5, 0u) != globe_x(5, 64u));
+    /* A mid-latitude dot must visibly translate as theta advances. */
+    {
+        u8 mid = (u8)(n / 2u);
+        int moved = (globe_x(mid, 0u) != globe_x(mid, 16u))
+                 && (globe_x(mid, 16u) != globe_x(mid, 32u));
+        check("dot x translates with rotation", moved);
+    }
+
     check("x deterministic", globe_x(7, 100u) == globe_x(7, 100u));
 
-    /* Each point is front-facing for roughly half a full turn. */
+    /* Each dot is front-facing for roughly half a full turn. */
     {
         u16 t, fc = 0;
         for (t = 0; t < 256u; t++) if (globe_front(9, (u8)t)) fc++;
         check("front ~half the turn", fc > 80u && fc < 176u);
     }
 
-    /* Both blue and white dots exist, and blue are a minority (sparse). */
-    {
-        int blue = 0, white = 0;
-        for (i = 0; i < n; i++) {
-            if (globe_is_blue(i)) blue++; else white++;
-        }
-        check("has blue dots", blue > 0);
-        check("has white dots", white > 0);
-        check("blue dots are sparse", blue < white);
-    }
-
-    /* globe_init is reusable with a different size (no out-of-bounds). */
+    /* re-init resizes cleanly. */
     {
         int ok = 1;
         globe_init(128u, 96u, 64u);
