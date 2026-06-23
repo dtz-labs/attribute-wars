@@ -28,4 +28,10 @@ zcc +zx -SO3 -clib=sdcc_iy -startup=31 -iquote"$ROOT/include" \
     src/music_ay.asm src/pt3prom.asm src/tune.asm \
     -o build/game -create-app
 
+if [ -f assets/loading.scr ]; then
+    z88dk-appmake +zx --binfile build/game_CODE.bin --org 32768 \
+        --output build/game.tap --screen assets/loading.scr \
+        --clearaddr 32767 --usraddr 32768
+fi
+
 ls -l build/game.tap
