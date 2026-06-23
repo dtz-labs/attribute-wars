@@ -579,85 +579,122 @@ static void title_shine(u8 s)
     }
 }
 
-/* Clear the globe's bitmap bounding box in buffer `base` (erase last dots). */
-static void globe_box_clear(u16 base)
-{
-    u8 y;
-    for (y = (u8)(GLOBE_CY - GLOBE_R); y <= (u8)(GLOBE_CY + GLOBE_R); y++) {
-        u8 *row = scld_scanline(base, y);
-        u8  c;
-        for (c = 10u; c <= 21u; c++) {
-            row[c] = 0u;
-        }
-    }
-}
+/* Globe placement for the two title phases (cell-box = bytes for the bitmap
+ * clear AND cells for the attr reset). Attract: big & central. Menu: small, top,
+ * leaving room for the scheme list below. */
+#define ATTRACT_CX 128u
+#define ATTRACT_CY  80u
+#define ATTRACT_R   56u
+#define ATTRACT_R0   3u   /* (CY-R)/8 */
+#define ATTRACT_R1  17u   /* (CY+R)/8 */
+#define ATTRACT_C0   9u   /* (CX-R)/8 */
+#define ATTRACT_C1  23u   /* (CX+R)/8 */
 
-/* Plot the front-facing globe dots into buffer `base` at rotation theta. */
-static void globe_plot(u16 base, u8 theta)
+#define MENU_CX 128u
+#define MENU_CY  40u
+#define MENU_R   28u
+#define MENU_R0   1u
+#define MENU_R1   8u
+#define MENU_C0  12u
+#define MENU_C1  19u
+
+/* Draw the rotating globe into the back buffer: clear its bitmap box, reset its
+ * attr region (white ink / black paper), then plot front points -- a meridian
+ * point colours its cell blue, parallels stay white. Box = cell rows r0..r1,
+ * byte cols c0..c1. Only the back attribute block is touched (it flips in). */
+static void globe_draw(u8 r0, u8 r1, u8 c0, u8 c1, u8 theta)
 {
-    u8 i, n = globe_count();
+    u16 back = scld_back();
+    u8 *attr = (u8 *)(scld_back_page() ? SCLD_ATTRS_B : SCLD_ATTRS_A);
+    u8  r, c, sub, i, n;
+
+    for (r = r0; r <= r1; r++) {
+        for (sub = 0; sub < 8u; sub++) {
+            u8 *row = scld_scanline(back, (u8)(r * 8u + sub));
+            for (c = c0; c <= c1; c++) row[c] = 0u;
+        }
+        for (c = c0; c <= c1; c++) attr[(u16)r * 32u + c] = ATTR(0, 0, 7);
+    }
+
+    n = globe_count();
     for (i = 0; i < n; i++) {
         if (globe_front(i, theta)) {
             u8 x = globe_x(i, theta);
             u8 y = globe_y(i);
-            scld_scanline(base, y)[x >> 3] |= (u8)(0x80u >> (x & 7u));
+            scld_scanline(back, y)[x >> 3] |= (u8)(0x80u >> (x & 7u));
+            if (globe_is_meridian(i)) {
+                attr[(u16)(y >> 3) * 32u + (x >> 3)] = ATTR(0, 1, 7);   /* blue ink */
+            }
         }
     }
 }
 
-/* Title: a rotating planet over the menu. Double-buffered (the globe animates),
- * so static text goes into BOTH bitmaps and every attribute write hits BOTH
- * blocks. Poll keys 1/2/3 (scheme) + 0 (start); returns the chosen CTRL_*. */
+/* Title in two double-buffered phases: an ATTRACT screen with a big spinning
+ * planet + "PRESS ANY KEY", then a MENU screen (smaller planet + scheme list).
+ * White dots + blue meridian lines on black. Returns the chosen CTRL_* scheme. */
 static u8 title_screen(void)
 {
     u8 sel   = CTRL_KEMPSTON_MOVE;
     u8 s     = SHINE_S_MIN;
     u8 pause = 0u;
     u8 theta = 0u;
+    u8 t     = 0u;
+    intent_t in;
 
-    globe_init();
-
+    /* ---- ATTRACT: big planet + flashing prompt ---- */
     scld_clear(SCLD_SCREEN_A);
     scld_clear(SCLD_SCREEN_B);
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
     memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
-
     put_text_both( 9,  1, "ATTRIBUTE WARS");
-    put_text_both( 2, 14, "1 KEMPSTON MOVE  KEYS FIRE");
-    put_text_both( 2, 16, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text_both( 2, 18, "3 TWO JOYSTICKS (TS2068)");
-    put_text_both( 2, 20, "0 START GAME");
-    put_text_both( 5, 21, "\x7F 2026 Claude, Codex,");
-    put_text_both( 5, 22, "idea @mpasternak,");
-    put_text_both( 3, 23, "music by Pator (@paatorr)");
-
-    title_attr_row(1, ATTR(1, 0, 5));      /* base title colour                   */
+    put_text_both( 9, 22, "PRESS ANY KEY");
+    globe_init(ATTRACT_CX, ATTRACT_CY, ATTRACT_R);
+    title_attr_row(1, ATTR(1, 0, 5));
 
     for (;;) {
-        /* scheme highlight (bright yellow) + START (bright green), both blocks */
-        title_attr_row(14, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(16, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(18, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(20, ATTR(1, 0, 4));
         title_shine(s);
-
-        /* draw the globe into the hidden buffer, then flip (HALT-paced) */
-        globe_box_clear(scld_back());
-        globe_plot(scld_back(), theta);
+        title_attr_row(22, ((t >> 4) & 1u) ? ATTR(1, 0, 7) : ATTR(0, 0, 0));  /* flash */
+        globe_draw(ATTRACT_R0, ATTRACT_R1, ATTRACT_C0, ATTRACT_C1, theta);
         scld_present();
-        theta = (u8)(theta + 2u);          /* spin speed */
+        theta = (u8)(theta + 2u);
+        t++;
+        if (pause > 0u) { pause--; if (pause == 0u) s = SHINE_S_MIN; }
+        else if (s < SHINE_S_MAX) s++;
+        else pause = SHINE_PAUSE;
 
-        /* shine sweep advance */
-        if (pause > 0u) {
-            pause--;
-            if (pause == 0u) {
-                s = SHINE_S_MIN;
-            }
-        } else if (s < SHINE_S_MAX) {
-            s++;
-        } else {
-            pause = SHINE_PAUSE;
-        }
+        input_read(DIR_NONE, &in);
+        if (in.fire || in.boost || in_inkey() != 0) break;
+    }
+
+    /* ---- MENU: smaller planet + control-scheme list ---- */
+    scld_clear(SCLD_SCREEN_A);
+    scld_clear(SCLD_SCREEN_B);
+    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
+    memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
+    put_text_both( 2, 10, "1 KEMPSTON MOVE  KEYS FIRE");
+    put_text_both( 2, 12, "2 KEYS MOVE  KEMPSTON FIRE");
+    put_text_both( 2, 14, "3 TWO JOYSTICKS (TS2068)");
+    put_text_both( 2, 16, "0 START GAME");
+    put_text_both( 6, 19, "\x7F 2026 Claude, Codex");
+    put_text_both( 1, 20, "human in the loop: @mpasternak");
+    put_text_both( 8, 21, "music: @paatorr");
+    globe_init(MENU_CX, MENU_CY, MENU_R);
+
+    /* wait for the attract key to be released so it doesn't fall through */
+    while (in_inkey() != 0) {
+        globe_draw(MENU_R0, MENU_R1, MENU_C0, MENU_C1, theta);
+        scld_present();
+        theta = (u8)(theta + 2u);
+    }
+
+    for (;;) {
+        title_attr_row(10, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(12, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(14, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+        title_attr_row(16, ATTR(1, 0, 4));
+        globe_draw(MENU_R0, MENU_R1, MENU_C0, MENU_C1, theta);
+        scld_present();
+        theta = (u8)(theta + 2u);
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
