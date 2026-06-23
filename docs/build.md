@@ -20,9 +20,6 @@ make zx48         # build ZX Spectrum 48K TAP -> build/game-zx48.tap
 make TARGET=zx128 # same as make zx128
 ```
 
-The old `build.sh`, `build-zx128.sh`, and `build-zx48.sh` scripts remain as
-thin Makefile wrappers.
-
 ## Run In ZEsarUX
 
 ```sh
@@ -32,8 +29,6 @@ make run-zx128    # ZX Spectrum 128K / +2-style build
 make run-zx48     # ZX Spectrum 48K build
 ```
 
-The old `run-zesarux*.sh` scripts remain as thin Makefile wrappers.
-
 ## Host Tests
 
 ```sh
@@ -42,6 +37,15 @@ make test
 
 This runs the pure-logic host tests with the system C compiler. No emulator or
 Z80 toolchain is required for these tests.
+
+## Measurement Harness
+
+```sh
+make measure
+```
+
+This builds the non-shipped `src/measure_main.c` T-state harness and prints the
+marker addresses from `build/measure.map` for `z88dk-ticks`.
 
 ## Artifacts
 

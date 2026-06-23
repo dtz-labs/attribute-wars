@@ -42,7 +42,7 @@ ZCC_BASE := $(ZCC) +zx -SO3 -clib=sdcc_iy -startup=31 -iquote$(ROOT)/include
 APPMAKE_TAP = $(APPMAKE) +zx --binfile $(1)_CODE.bin --org $(ORG) \
 	--output $(2) --screen $(LOADING_SCREEN) --clearaddr $(CLEARADDR) --usraddr $(USRADDR)
 
-.PHONY: help all target timex zx128 zx48 clean test run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48
+.PHONY: help all target timex zx128 zx48 clean test measure run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48
 
 help:
 	@echo "Attribute Wars build targets"
@@ -62,6 +62,7 @@ help:
 	@echo
 	@echo "Other:"
 	@echo "  make test           run host unit tests"
+	@echo "  make measure        build T-state harness and print marker addresses"
 	@echo "  make clean          remove build/"
 
 all:
@@ -109,6 +110,21 @@ $(BUILD)/game-zx48.tap: $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOAD
 
 test:
 	./test/run.sh
+
+measure: $(BUILD)/measure_CODE.bin
+	@echo "marker addresses (.map):"
+	@awk '/^_mark[0-9A-C][[:space:]]/ {printf "  %-8s %s\n", $$1, $$3}' $(BUILD)/measure.map
+
+$(BUILD)/measure_CODE.bin: src/measure_main.c src/scld.c src/sprite.c src/sprites.c src/enemy.c src/bullet.c src/collision.c src/rng.c src/music.c src/blit.asm src/enemy_update.asm src/collide.asm $(MUSIC_ASM) $(HEADERS) | $(BUILD)
+	mkdir -p $(BUILD)/obj-measure
+	cd $(BUILD)/obj-measure && $(ZCC_BASE) -m \
+		$(ROOT)/src/measure_main.c $(ROOT)/src/scld.c \
+		$(ROOT)/src/sprite.c $(ROOT)/src/sprites.c \
+		$(ROOT)/src/enemy.c $(ROOT)/src/bullet.c \
+		$(ROOT)/src/collision.c $(ROOT)/src/rng.c $(ROOT)/src/music.c \
+		$(ROOT)/src/blit.asm $(ROOT)/src/enemy_update.asm \
+		$(ROOT)/src/collide.asm $(MUSIC_ASM_ABS) \
+		-o $(ROOT)/$(BUILD)/measure -create-app >/dev/null
 
 run: run-tc2048
 run-timex: run-tc2048

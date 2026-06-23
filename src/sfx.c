@@ -55,6 +55,9 @@ static const sfx_params_t sfx_table[SFX_N] = {
     /* SFX_DEATH      */ { 32u, 250u },   /* frozen death_anim -> budget free   */
     /* SFX_EXTRA_LIFE */ {  6u, 140u },   /* live: ~21.8k T  rising chime       */
     /* SFX_BONUS      */ { 10u,  90u },   /* ~19.8k T, before the next telegraph */
+    /* SFX_DASH       */ {  4u,  42u },   /* quick high lunge tick              */
+    /* SFX_DASH_READY */ {  6u,  50u },   /* short ready chime                  */
+    /* SFX_DASH_FAIL  */ { 24u,  22u },   /* low cooldown bump                  */
 };
 
 void sfx_play(u8 id)

@@ -54,7 +54,8 @@ int main(void)
     bullets_t bullets;
     u16 back = SCLD_SCREEN_B;
     u16 y;
-    u8  d, k, i;
+    u16 k;
+    u8  d, i;
 
     /* row-offset table (normally built by scld_init; avoid IM1/EI/HALT here) */
     for (y = 0; y < SCLD_H; y++) {

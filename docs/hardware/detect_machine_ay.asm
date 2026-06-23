@@ -2,7 +2,7 @@
 ; ZX Spectrum / Timex machine and AY detector
 ;
 ; Reference detector supplied by @mpasternak79, 2026-06-23.
-; Not linked by build.sh yet. Keep this file as the canonical reference for a
+; Not linked by the Makefile yet. Keep this file as the canonical reference for a
 ; future machine/AY status API and any later rewrite of the SOUND menu probing.
 ;
 ; Call:

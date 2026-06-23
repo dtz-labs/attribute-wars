@@ -8,15 +8,15 @@ A Geometry-Wars-inspired **twin-stick shooter for the Timex TC2048** (Z80A @ 3.5
 
 ## Commands
 
-- **Build targets:** `make` prints available targets. `make all` builds every platform TAP in parallel; `make timex`, `make zx128`, and `make zx48` build one platform. `make TARGET=zx128` is also supported. The old `build*.sh` scripts are thin Makefile wrappers.
+- **Build targets:** `make` prints available targets. `make all` builds every platform TAP in parallel; `make timex`, `make zx128`, and `make zx48` build one platform. `make TARGET=zx128` is also supported.
 - **Timex build:** `make timex` → `build/game.tap`. Requires z88dk at `~/Programowanie/z88dk` or on `PATH`. Compiles the C sources + hand asm with `zcc +zx -SO3 -clib=sdcc_iy`. ORG defaults to `0x8000` (no `-zorg`).
 - **ZX Spectrum 128K build:** `make zx128` → `build/game-zx128.tap`. It defines `ZX128_PAGE_FLIP`, `ZX_SINCLAIR_DUAL_STICK`, and `ZX128_NO_MUSIC`: RAM page 7 is kept banked into `$C000`, bit 3 of port `$7FFD` flips between page 5/page 7, "two joysticks" means Sinclair 1/2, and PT3 music is disabled in this first 128K build to keep resident code/data/BSS below `$C000`. A checked experiment with PT3 enabled ended at about `$F1C2`, so ZX128 AY music needs a banked tune/player layout before it can ship with this page-flip renderer.
 - **ZX Spectrum 48K build:** `make zx48` → `build/game-zx48.tap`. It defines `ZX48_SINGLE_BUFFER` and `ZX_SINCLAIR_DUAL_STICK`: no SCLD writes, screen B aliases screen A, `scld_present()` is just `HALT`, and "two joysticks" means Sinclair 1/2 rather than TS2068 AY joystick ports.
-- **Run / verify:** `make run-tc2048` launches `build/game.tap` in **ZEsarUX** as a `TC2048` (`--enabletimexvideo`, `--joystickemulated Kempston`). `make run-tc2068` launches the Timex build as `TC2068`. `make run-zx128` launches `build/game-zx128.tap` as `128k`. `make run-zx48` launches `build/game-zx48.tap` as a plain `48k`. The old `run-zesarux*.sh` scripts are thin Makefile wrappers. ZEsarUX is the preferred Timex emulator here — not Fuse (the macOS Fuse build has flaky HID joystick support and no headless screenshot). Controls: move with `5/6/7/8` (cursor) or a Kempston pad; fire with `0` or `Q W E / A D / Z X C`.
+- **Run / verify:** `make run-tc2048` launches `build/game.tap` in **ZEsarUX** as a `TC2048` (`--enabletimexvideo`, `--joystickemulated Kempston`). `make run-tc2068` launches the Timex build as `TC2068`. `make run-zx128` launches `build/game-zx128.tap` as `128k`. `make run-zx48` launches `build/game-zx48.tap` as a plain `48k`. ZEsarUX is the preferred Timex emulator here — not Fuse (the macOS Fuse build has flaky HID joystick support and no headless screenshot). Controls: move with `5/6/7/8` (cursor) or a Kempston pad; fire with `0` or `Q W E / A D / Z X C`.
 - **Host unit tests:** `./test/run.sh` builds and runs all `test_*.c` natively with the system `cc` (`-std=c99 -Wall -Wextra -Werror`) — no Z80 toolchain, no emulator, instant red/green. Binaries land in `build/host/`.
 - **Run a single test:** after `./test/run.sh`, just re-run its binary, e.g. `./build/host/test_enemy`. To build one in isolation, mirror the `run.sh` line — e.g. `cc -std=c99 -Wall -Wextra -Werror -Iinclude test/test_player.c src/player.c src/geometry.c src/input.c -o build/host/test_player && ./build/host/test_player`. Each test links only the pure-logic sources it exercises.
 
-`src/measure_main.c` is a **separate, non-shipped** T-state measurement harness (logic vs render cost via `z88dk-ticks`); it is not part of `build.sh` and is built by hand when profiling.
+`src/measure_main.c` is a **separate, non-shipped** T-state measurement harness (logic vs render cost via `z88dk-ticks`); build it with `make measure` when profiling.
 
 ## Architecture
 

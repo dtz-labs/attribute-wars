@@ -460,23 +460,6 @@ static void put_text_both(u8 col, u8 row, const char *s)
     put_text(SCLD_SCREEN_B, col, row, s);
 }
 
-/* Dash readiness: a single dot on the top frame (col 15) -- bright GREEN when
- * the dash is ready (dash_cd==0), plain magenta frame while charging. Attribute
- * only + cached (one put_attr on a state change), so the common frame pays
- * nothing. (The earlier ">" arrows via put_char dragged the whole game.) */
-static u8 g_dash_dot = 0xFFu;     /* reset (=0xFF) wherever the HUD is invalidated */
-
-static void hud_dash_dot(u8 dash_cd)
-{
-    u8 rdy = (u8)(dash_cd == 0u);
-    if (rdy == g_dash_dot) {
-        return;                                       /* no state change */
-    }
-    g_dash_dot = rdy;
-    put_attr(0u, 15u, (u8)(rdy ? ATTR(1, 4, 0)        /* green dot: ready */
-                               : ATTR(1, 3, 7)));     /* frame: charging  */
-}
-
 /*
  * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
  * player died on, and waits for a choice:
@@ -674,6 +657,7 @@ int main(void)
     static u8 menu_sound = 0xFFu;
     u8        i;
     u8        cooldown = 0;
+    u8        boost_was_down = 0u;
     u8        tick     = 0;            /* frame counter (thruster flicker etc.)  */
     u8        invuln   = 0;            /* i-frames after a hit                    */
     u8        bullet_count = 0;        /* active bullet slots, avoids empty scans */
@@ -745,8 +729,8 @@ main_menu:
     recoil_timer = 0u;
     recoil_dx = 0;
     recoil_dy = 0;
+    boost_was_down = 0u;
     hud_invalidate();                 /* force first widget paint               */
-    g_dash_dot = 0xFFu;
     hud_draw_lives(g.lives);
     hud_draw_shields(g.shields);
     prevn[0] = 0;
@@ -759,8 +743,30 @@ main_menu:
         tick++;
 
         /* ---- input + player ---- */
-        input_read(player.facing, &in);
-        player_update(&player, &in);
+        {
+            u8 dash_t0;
+            u8 dash_cd0;
+            u8 boost_pressed;
+            u8 dash_fail = 0u;
+            input_read(player.facing, &in);
+            boost_pressed = (u8)(in.boost && !boost_was_down);
+            dash_t0 = player.dash_t;
+            dash_cd0 = player.dash_cd;
+            player_update(&player, &in);
+
+            if (in.boost && dash_t0 == 0u && dash_cd0 == 0u &&
+                    (in.move_dx || in.move_dy) && player.dash_t > 0u) {
+                sfx_play(SFX_DASH);
+            } else if (boost_pressed && dash_t0 == 0u && dash_cd0 > 0u) {
+                sfx_play(SFX_DASH_FAIL);
+                dash_fail = 1u;
+            }
+            if (!dash_fail && dash_cd0 > 0u && player.dash_cd == 0u &&
+                    player.dash_t == 0u) {
+                sfx_play(SFX_DASH_READY);
+            }
+            boost_was_down = in.boost;
+        }
 
         if (cooldown) {
             cooldown--;
@@ -944,11 +950,11 @@ main_menu:
                     wave_secs  = 0xFFFFu;
                     spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn     */
                     hud_invalidate();                 /* bitmaps + bars were wiped  */
-                    g_dash_dot = 0xFFu;
                     hud_draw_lives(g.lives);
                     hud_draw_shields(g.shields);
                     cooldown = 0;
                     recoil_timer = 0u;
+                    boost_was_down = 0u;
                     invuln = INVULN_FRAMES;
                 }
             }
@@ -1032,8 +1038,6 @@ main_menu:
             }
         }
         prevn[bi] = n;
-
-        hud_dash_dot(player.dash_cd);   /* green dot on the top frame = dash ready */
 
         /* Explosion sound SYNCED with the animation: while any hit-pop is on
          * screen, emit a short noisy crackle each frame so the whole burst is

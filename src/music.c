@@ -65,6 +65,9 @@ static const asfx_voice_t asfx_tbl[SFX_N] = {
     /* SFX_DEATH      */ { 1u,   0u, 24u, 1u },  /* long low noise boom       */
     /* SFX_EXTRA_LIFE */ { 0u,  84u,  0u, 1u },  /* ~1320 Hz chime, slow fade */
     /* SFX_BONUS      */ { 0u, 106u,  0u, 2u },  /* ~1045 Hz blip             */
+    /* SFX_DASH       */ { 1u,   0u,  5u, 4u },  /* bright noise whoosh       */
+    /* SFX_DASH_READY */ { 0u,  66u,  0u, 2u },  /* high ready chime          */
+    /* SFX_DASH_FAIL  */ { 0u, 260u,  0u, 4u },  /* low rejected thud         */
 };
 
 u8 music_default_sound(void)
