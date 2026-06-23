@@ -25,16 +25,20 @@ jobs:
           make all CHECK_ZX128_LAYOUT=:
 
       - name: Validate ZX128 memory layout
-        run: tools/check_zx128_layout.py build/aw-1-0-zx128k.map
+        run: |
+          set -eu
+          map_files=(build/*-zx128k.map)
+          test "${#map_files[@]}" -eq 1
+          tools/check_zx128_layout.py "${map_files[0]}"
 
       - name: Package TAP files
         run: |
           set -eu
           mkdir -p dist
+          tap_files=(build/*.tap)
+          test "${#tap_files[@]}" -eq 3
           zip -j "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip" \
-            build/aw-1.0-zx48k.tap \
-            build/aw-1.0-zx128k.tap \
-            build/aw-1.0-timex.tap
+            "${tap_files[@]}"
           unzip -l "dist/attribute-wars-${GITHUB_REF_NAME}-taps.zip"
 
       - name: Publish GitHub release
