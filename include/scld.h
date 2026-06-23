@@ -54,9 +54,23 @@
 
 /* --- Screen geometry & memory map (standard-resolution double buffer) ----- */
 #define SCLD_SCREEN_A   0x4000u   /* screen A bitmap base (page 0)            */
-#define SCLD_SCREEN_B   0x6000u   /* screen B bitmap base (page 1)            */
 #define SCLD_ATTRS_A    0x5800u   /* screen A attributes                      */
+
+#ifdef ZX128_PAGE_FLIP
+/* ZX Spectrum 128K build: normal screen is RAM page 5 at 0x4000; shadow screen
+ * is RAM page 7, kept banked into the 0xC000 window. */
+#define SCLD_SCREEN_B   0xC000u
+#define SCLD_ATTRS_B    0xD800u
+#elif defined(ZX48_SINGLE_BUFFER)
+/* ZX Spectrum 48K build: no SCLD, no shadow screen. Alias page B to page A so
+ * existing "draw both pages" cold paths remain correct and harmless. */
+#define SCLD_SCREEN_B   SCLD_SCREEN_A
+#define SCLD_ATTRS_B    SCLD_ATTRS_A
+#else
+#define SCLD_SCREEN_B   0x6000u   /* screen B bitmap base (page 1)            */
 #define SCLD_ATTRS_B    0x7800u   /* screen B attributes                      */
+#endif
+
 #define SCLD_BITMAP_LEN 6144u     /* bytes in one bitmap                      */
 #define SCLD_ATTRS_LEN  768u      /* bytes in one attribute block            */
 #define SCLD_W          256u      /* visible width  (pixels)                 */
@@ -125,7 +139,9 @@ static inline uint16_t scld_next_scanline(uint16_t a)
  * that turn a ~13k-T/sprite blit into a ~2k-T/sprite one. (Same idea as the
  * famous Spectrum line-address tables.)
  * ------------------------------------------------------------------------- */
+#ifndef ZX128_PAGE_FLIP
 extern uint16_t scld_row_off[SCLD_H];
+#endif
 
 /* ---------------------------------------------------------------------------
  * Hardware functions (Timex target only; implemented in scld.c).
@@ -148,6 +164,10 @@ extern uint8_t  scld_back_page(void);
  * writes of touching both buffers; the hidden one is never displayed). */
 extern uint16_t scld_shown(void);
 extern uint16_t scld_shown_attrs(void);
+
+/* Force screen A visible. Used by static single-page screens such as the title
+ * menu, which draw only into screen A. */
+extern void     scld_show_a(void);
 
 /* Wait for the next 50 Hz frame interrupt (HALT), then page-flip so the buffer
  * you just drew becomes visible. One call per frame, after drawing. */

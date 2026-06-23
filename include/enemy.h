@@ -10,7 +10,7 @@
 #include "types.h"
 #include "bullet.h"      /* enemies_update needs bullet positions (dodging) */
 
-#define MAX_ENEMIES 6      /* 8 overran the 50 Hz frame budget; 6 holds it */
+#define MAX_ENEMIES 7      /* hard gameplay cap; keep asm loops in lockstep */
 #define ENEMY_SPEED 1        /* pixels per frame (<= player so they're evadable) */
 
 /* Behaviour levels. (1 is intentionally unused for now.) The three BOUNCE
@@ -44,9 +44,9 @@ extern const wave_t wave_table[WAVE_COUNT];   /* §5.4 of the spec, verbatim */
 
 typedef struct {
     u8 x, y;      /* top-left pixel position           */
-    s8 dx, dy;    /* velocity (-1/0/+1), used by bounce */
+    s8 dx, dy;    /* velocity (-2..+2); bouncers use -1/0/+1 */
     u8 level;     /* ENEMY_BOUNCE / CHASE / HUNTER      */
-    u8 alive;     /* 0 = empty slot                    */
+    u8 alive;     /* 0 = empty; chasers use 2->1 hit points */
 } enemy_t;
 
 typedef struct {
@@ -57,6 +57,12 @@ typedef struct {
  * wave is 1-based; >16 loops at wave-16 settings with a random pattern.
  * wave==0 is treated as wave 1. */
 void enemies_spawn(enemies_t *es, u8 wave);
+
+/* First-hit chasers jump away from the shot. wound_mask uses enemy slot bits. */
+void enemies_jump_wounded_chasers(enemies_t *es, u8 wound_mask);
+
+/* Random hunter death bonus: spawn up to two hunter clones near a kill site. */
+u8 enemies_spawn_hunter_clones(enemies_t *es, u8 x, u8 y);
 
 /* Returns the pattern used in the last enemies_spawn call (for tests). */
 u8 enemy_last_pattern(void);

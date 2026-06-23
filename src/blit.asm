@@ -16,7 +16,9 @@
         EXTERN  _spr_x          ; u8   pixel x
         EXTERN  _spr_y          ; u8   pixel y (0..191)
         EXTERN  _spr_ptr        ; u16  pointer to 128-byte pre-shifted sprite
+        IFNDEF  ZX128_PAGE_FLIP
         EXTERN  _scld_row_off   ; u16[192] interleaved scanline offsets
+        ENDIF
 
 ; DOWN -- inline "HL := scanline below" (the old down_line subroutine, expanded
 ; at each row so the hot loops pay no call/ret per row). `skip` is a caller-
@@ -264,6 +266,26 @@ setup_full:
 setup_rows:
         ld      b,a             ; B = rows
 
+        IFDEF   ZX128_PAGE_FLIP
+        ; Low-memory ZX128 build: save the 384-byte scld_row_off table and
+        ; compute the standard Spectrum scanline offset directly:
+        ;   ((y&0xC0)<<5) + ((y&0x07)<<8) + ((y&0x38)<<2)
+        ld      a,d
+        and     0x38
+        add     a,a
+        add     a,a
+        ld      l,a
+        ld      a,d
+        and     0xC0
+        rrca
+        rrca
+        rrca
+        ld      h,a
+        ld      a,d
+        and     0x07
+        add     a,h
+        ld      h,a             ; HL = scanline offset
+        ELSE
         ld      a,d             ; y
         ld      l,a
         ld      h,0
@@ -274,6 +296,7 @@ setup_rows:
         inc     hl
         ld      d,(hl)
         ex      de,hl           ; HL = scld_row_off[y]
+        ENDIF
         ld      de,(_spr_base)
         add     hl,de           ; + base
         ld      a,(t_bx)

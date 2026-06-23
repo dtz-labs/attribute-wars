@@ -61,12 +61,12 @@ typedef struct {
  *   aims and fires; JOY_FIRE (incl. cursor 0) + SPACE boost.
  * Scheme B (CTRL_KEMPSTON_FIRE): QWEADZXC moves; Kempston tilt aims+fires;
  *   Kempston FIRE button fires in heading; S key boosts.
- * Scheme C (CTRL_DUAL_STICK): TS2068 left stick moves + its FIRE boosts;
- *   TS2068 right stick tilt aims+fires.
+ * Scheme C (CTRL_DUAL_STICK): target-dependent twin-stick mode. Timex build:
+ *   TS2068 left/right built-in sticks. Sinclair build: Sinclair 1/2 sticks.
  */
 #define CTRL_KEMPSTON_MOVE 0u  /* Scheme A: Kempston move, QWEADZXC fire, JOY_FIRE+SPACE boost */
 #define CTRL_KEMPSTON_FIRE 1u  /* Scheme B: QWEADZXC move, Kempston tilt aim/fire, S boost     */
-#define CTRL_DUAL_STICK    2u  /* Scheme C: TS2068 left move+boost, right aim/fire             */
+#define CTRL_DUAL_STICK    2u  /* Scheme C: target twin-stick move+boost / aim+fire             */
 
 /* Select the active control scheme (CTRL_*). Persists until changed. */
 void input_set_scheme(u8 scheme);

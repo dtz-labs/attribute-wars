@@ -229,9 +229,13 @@ static u8 g_scheme = CTRL_KEMPSTON_MOVE;
 void input_set_scheme(u8 scheme)
 {
     g_scheme = scheme;
+#ifndef ZX_SINCLAIR_DUAL_STICK
     if (scheme == CTRL_DUAL_STICK) {
         ts2068_joy_init();   /* arm the AY port-A-input read on a TS2068 */
     }
+#else
+    (void)scheme;
+#endif
 }
 
 /* Aim in `facing` and fire -- shared by the fire-button schemes. */
@@ -285,6 +289,15 @@ void input_read(u8 facing, intent_t *out)
     }
 
     if (g_scheme == CTRL_DUAL_STICK) {
+#ifdef ZX_SINCLAIR_DUAL_STICK
+        /* Sinclair twin-stick build:
+         *   Sinclair 1 -> move + boost on FIRE.
+         *   Sinclair 2 -> aim + fire on tilt/FIRE.
+         * This path never touches the TS2068 AY joystick ports. */
+        u8 mv  = joy_sanitize((u8)in_stick_sinclair1());
+        u8 aim = joy_sanitize((u8)in_stick_sinclair2());
+        s8 adx, ady;
+#else
         /* Scheme C: TS2068 twin-stick.
          *   Left stick  -> move; its FIRE button -> boost.
          *   Right stick -> aim+fire (tilt = aim+fire).
@@ -298,6 +311,7 @@ void input_read(u8 facing, intent_t *out)
         u8 aim = (u8)(joy_sanitize(ts2068_read_joy(TS_JOY2_PORT)) |
                       joy_sanitize((u8)in_stick_sinclair2()));
         s8 adx, ady;
+#endif
 
         decode_move(mv,  &out->move_dx, &out->move_dy);
         /* Left stick FIRE -> boost. */

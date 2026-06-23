@@ -15,7 +15,7 @@
  *                  wave clear g.wave++ advances the difficulty index
  *   - game over:   lives==0 -> a GAME OVER screen with final score + wave;
  *                  FIRE/SPACE resumes from the death wave, Q starts a fresh game
- *   - sound:       1-bit beeper SFX on shoot/explode/hit/death/extra-life/bonus
+ *   - sound:       title-selected beeper, AY music+FX, or AY FX-only
  *   - HUD:         lives + shields (top), timer + boost bars (bottom), and the
  *                  SCORE rendered as big attribute-cell digits behind the action
  *   - rendering:   incremental erase+redraw into the hidden buffer, page-flip
@@ -39,7 +39,7 @@
 #include "rng.h"
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
-#include "music.h"         /* AY chiptune (auto-detected; no-op without an AY)   */
+#include "music.h"         /* title-selected beeper / AY music+FX / AY FX       */
 #include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
@@ -56,6 +56,12 @@
 
 #define PLAYER_START_X 128u
 #define PLAYER_START_Y 96u
+
+#ifdef ZX_SINCLAIR_DUAL_STICK
+#define CTRL_DUAL_LABEL "3 SINCLAIR JOYSTICKS"
+#else
+#define CTRL_DUAL_LABEL "3 TWO JOYSTICKS (TS2068)"
+#endif
 
 /* Visual recoil (spec §3.5): how many frames the ship draws kicked-back. */
 #define RECOIL_FRAMES 3u
@@ -75,13 +81,25 @@ static cell_t prev[2][MAX_DRAW];
 static u8     prevn[2];
 
 /* Pre-shifted sprite tables (built once at startup from the 8-byte source art).
- * Bullets/thruster are not sprites -- they use the cheap bul_draw/bul_erase. */
+ * Bullets/thruster are not sprites -- they use the cheap bul_draw/bul_erase.
+ *
+ * The ZX128 page-flip build keeps RAM page 7 mapped at 0xC000. Its display file
+ * uses 0xC000..0xDAFF, leaving 0xDB00..0xFFFF free; park the preshift tables
+ * there so the normal 0x8000..0xBFFF resident area has room for the stack. */
+#ifdef ZX128_PAGE_FLIP
+#define ZX128_SCRATCH_BASE 0xDB00u
+#define ps_ship_dir ((u8 *)(uintptr_t)ZX128_SCRATCH_BASE)
+#define ps_enemy    ((u8 *)(uintptr_t)(ZX128_SCRATCH_BASE + 8u * SPR_PRESHIFT_SIZE))
+#define PS_SHIP_DIR(d_) (ps_ship_dir + (u16)(d_) * SPR_PRESHIFT_SIZE)
+#else
 static u8 ps_ship_dir[8][SPR_PRESHIFT_SIZE];    /* 8 directional ship frames */
 static u8 ps_enemy[SPR_PRESHIFT_SIZE];          /* level 0 bouncer (all-dir) */
 static u8 ps_enemy_vbounce[SPR_PRESHIFT_SIZE];  /* level 4 vertical bouncer  */
 static u8 ps_enemy_hbounce[SPR_PRESHIFT_SIZE];  /* level 5 horizontal bouncer*/
 static u8 ps_enemy_chase[SPR_PRESHIFT_SIZE];    /* level 2 chaser  */
 static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
+#define PS_SHIP_DIR(d_) ps_ship_dir[(d_)]
+#endif
 /* (the HUD life-heart pre-shift table now lives in hud.c) */
 
 /* Pick the pre-shifted table for an enemy's behaviour level. Level 1 is unused,
@@ -89,6 +107,9 @@ static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
 #if ENEMY_BOUNCE_H != 5
 #error "enemy_sprite_by_level assumes enemy levels 0..5; update the table"
 #endif
+#ifdef ZX128_PAGE_FLIP
+#define ENEMY_SPRITE(level_) ps_enemy
+#else
 static const u8 * const enemy_sprite_by_level[] = {
     ps_enemy, ps_enemy, ps_enemy_chase, ps_enemy_hunter,
     ps_enemy_vbounce, ps_enemy_hbounce
@@ -96,6 +117,7 @@ static const u8 * const enemy_sprite_by_level[] = {
 
 #define ENEMY_SPRITE(level_) \
     (((level_) <= ENEMY_BOUNCE_H) ? enemy_sprite_by_level[(level_)] : ps_enemy)
+#endif
 
 /* Wave time budget in frames for the active wave. Mirrors enemies_spawn()'s
  * index clamp (1-based wave; wave==0 -> wave 1; >16 loops at index 15) so the
@@ -310,19 +332,16 @@ static void death_anim(u8 px, u8 py)
          * -- a loud crackle every expansion frame. */
         sfx_noise();
         sfx_noise();
-        scld_wait();
-        music_tick();                                           /* keep music alive */
+        scld_wait();                                            /* music ticks from the IM2 ISR */
         if (f >= (u8)(maxR - 1u)) {
             scld_wait();                                        /* brief hold full */
-            music_tick();
         }
     }
 }
 
-/* ---- spawn telegraph: gently pulse the cells where the next wave appears ----
- * For ~TELEGRAPH_FRAMES the enemies are inert and invisible; their spawn cells
- * blink, then they pop in. Gives the player a moment + a warning. */
-#define TELEGRAPH_FRAMES 80u
+/* ---- spawn telegraph: one quick warning blink where the next wave appears ----
+ * Enemies are inert/invisible for this short warning, then pop in. */
+#define TELEGRAPH_FRAMES 16u
 
 static void telegraph_blink(const enemies_t *es, u8 tk)
 {
@@ -360,7 +379,7 @@ static void game_over_flash(void)
         memset((u8 *)SCLD_ATTRS_A, v, SCLD_ATTRS_LEN);
         memset((u8 *)SCLD_ATTRS_B, v, SCLD_ATTRS_LEN);
         d = 6;
-        while (d--) { scld_wait(); music_tick(); }
+        while (d--) scld_wait();        /* music ticks from the IM2 ISR */
     }
 }
 
@@ -441,28 +460,12 @@ static void put_text_both(u8 col, u8 row, const char *s)
     put_text(SCLD_SCREEN_B, col, row, s);
 }
 
-/* Dash readiness: a single dot on the top frame (col 15) -- bright GREEN when
- * the dash is ready (dash_cd==0), plain magenta frame while charging. Attribute
- * only + cached (one put_attr on a state change), so the common frame pays
- * nothing. (The earlier ">" arrows via put_char dragged the whole game.) */
-static u8 g_dash_dot = 0xFFu;     /* reset (=0xFF) wherever the HUD is invalidated */
-
-static void hud_dash_dot(u8 dash_cd)
-{
-    u8 rdy = (u8)(dash_cd == 0u);
-    if (rdy == g_dash_dot) {
-        return;                                       /* no state change */
-    }
-    g_dash_dot = rdy;
-    put_attr(0u, 15u, (u8)(rdy ? ATTR(1, 4, 0)        /* green dot: ready */
-                               : ATTR(1, 3, 7)));     /* frame: charging  */
-}
-
 /*
  * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
  * player died on, and waits for a choice:
  *   FIRE / SPACE -> resume from the death wave  (returns 0)
  *   Q            -> fresh game from wave 1       (returns 1)
+ *   ENTER        -> return to the title menu     (returns 2)
  * Drawn into BOTH bitmaps + both attribute blocks, so it reads regardless of
  * which page the last page-flip left visible (we don't flip while waiting).
  * Caller does the game_state reset + re-init.
@@ -484,6 +487,7 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
     put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
     put_u8(27, 17, death_wave);
     put_text_both( 3, 19, "Q           NEW GAME");
+    put_text_both( 3, 21, "ENTER       MAIN MENU");
 
     for (;;) {
         intent_t in;
@@ -497,8 +501,10 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
         if (in_key_pressed(IN_KEY_SCANCODE_q)) {
             return 1u;                 /* fresh game */
         }
-        scld_wait();
-        music_tick();                  /* music continues on the game-over screen */
+        if (in_key_pressed(IN_KEY_SCANCODE_ENTER)) {
+            return 2u;                 /* title menu */
+        }
+        scld_wait();                   /* music continues from the IM2 ISR */
     }
 }
 
@@ -512,107 +518,130 @@ static void title_attr_row(u8 row, u8 v)
     }
 }
 
-/* ---- title shine-sweep: diagonal glint across "ATTRIBUTE WARS" ----
- *
- * The title text occupies row 3, cols 9..22 (14 characters: "ATTRIBUTE WARS").
- * The sweep diagonal value for cell (col, row) is (col + row).  With a single
- * title row (row=3) the range is (9+3)=12 .. (22+3)=25.
- *
- * sweep position `s` advances each frame over that range, then pauses for
- * SHINE_PAUSE frames before wrapping back to the start.
- *
- * For each title cell the brightness relative to `s` is:
- *   d = (col + 3) - s
- *   d == 0  -> BRIGHT WHITE ink (on the sweep line)
- *   d == 1  -> mid shade (cyan, bright) — the trailing cell
- *   else    -> base colour (bright cyan)
+/* ---- title shine-sweep ----------------------------------------------------
+ * A one-cell glint walks across each title/menu/credit text row in sequence,
+ * then pauses briefly before restarting at "ATTRIBUTE WARS". Attribute writes
+ * are title-screen-only, so clarity beats micro-optimising the small row table.
  */
-#define SHINE_COL_START  9u   /* first col of "ATTRIBUTE WARS"                 */
-#define SHINE_COL_END   22u   /* last  col of "ATTRIBUTE WARS" (14 chars)      */
-#define SHINE_ROW        3u   /* the title character row                        */
-/* diagonal range: (col+row) for col in [9..22], row=3 → [12..25] */
-#define SHINE_S_MIN     12u   /* (SHINE_COL_START + SHINE_ROW)                 */
-#define SHINE_S_MAX     25u   /* (SHINE_COL_END   + SHINE_ROW)                 */
-#define SHINE_PAUSE     60u   /* frames to hold before restarting the sweep    */
+#define SHINE_ROWS   15u
+#define SHINE_PAUSE  40u
 
-/* Paint the title row attribute cells for the current sweep position. */
-static void title_shine(u8 s)
+static const u8 shine_row[SHINE_ROWS] = {
+     3u,  4u,  7u,  8u,  9u, 10u, 12u, 13u, 14u, 15u, 16u, 18u, 20u, 22u, 23u
+};
+static const u8 shine_col0[SHINE_ROWS] = {
+     9u,  5u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  5u,  0u,  8u
+};
+static const u8 shine_col1[SHINE_ROWS] = {
+    22u, 26u,  9u, 27u, 27u, 25u,  6u,  9u, 11u,  5u, 21u, 13u, 25u, 31u, 22u
+};
+
+static void title_base_attrs(u8 sel, u8 snd)
 {
-    u8 col;
-    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)SHINE_ROW * 32u;
-    for (col = SHINE_COL_START; col <= SHINE_COL_END; col++) {
-        u8 diag = (u8)(col + SHINE_ROW);   /* == col + 3 */
-        u8 attr;
-        if (diag == s) {
-            attr = ATTR(1, 0, 7);          /* BRIGHT WHITE ink — on the glint  */
-        } else if (diag == (u8)(s + 1u)) {
-            attr = ATTR(1, 0, 6);          /* BRIGHT YELLOW — trailing cell     */
-        } else {
-            attr = ATTR(1, 0, 5);          /* bright cyan — base title colour   */
-        }
-        a[col] = attr;
+    title_attr_row( 3, ATTR(1, 0, 5));      /* title: bright cyan */
+    title_attr_row( 4, ATTR(1, 0, 5));      /* version */
+    title_attr_row( 7, ATTR(1, 0, 5));      /* CONTROLS heading */
+    title_attr_row( 8, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row( 9, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(10, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(12, ATTR(1, 0, 5));      /* SOUND heading */
+    title_attr_row(13, (snd == SOUND_BEEPER)       ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(14, (snd == SOUND_MUSIC_FX)     ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(15, (snd == SOUND_FX)           ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(16, ATTR(0, 0, 5));      /* detected machine / AY */
+    title_attr_row(18, ATTR(1, 0, 4));      /* START */
+    title_attr_row(20, ATTR(0, 0, 7));
+    title_attr_row(22, ATTR(0, 0, 7));
+    title_attr_row(23, ATTR(0, 0, 7));
+}
+
+static void title_shine(u8 row_idx, u8 col)
+{
+    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)shine_row[row_idx] * 32u;
+    if (col >= shine_col0[row_idx] && col <= shine_col1[row_idx]) {
+        a[col] = ATTR(1, 0, 7);            /* bright white glint */
+    }
+    if (col > shine_col0[row_idx]) {
+        a[(u8)(col - 1u)] = ATTR(1, 0, 6); /* yellow trail */
     }
 }
 
-/* Draw the menu, poll keys 1/2/3 (pick a control scheme) and 0 (start).
- * Returns the chosen CTRL_* scheme. */
-static u8 title_screen(void)
+/* Draw the menu, poll keys 1/2/3 (controls), 4/5/6 (sound), and 0 (start).
+ * AY setup is still deferred on the first title screen; if music is already
+ * playing, selecting BEEPER or FX stops just the tune immediately. */
+static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
 {
     u8 sel = CTRL_KEMPSTON_MOVE;
-    /* Sweep state: s is the current diagonal position; pause counts down between
-     * passes. Start s at SHINE_S_MIN so the glint enters from the left edge. */
-    u8 s     = SHINE_S_MIN;
+    u8 snd = initial_sound;
+    u8 shine_i = 0u;
+    u8 shine_c = shine_col0[0];
     u8 pause = 0u;
 
+    scld_show_a();
     scld_clear(SCLD_SCREEN_A);
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
 
     put_text(SCLD_SCREEN_A,  9,  3, "ATTRIBUTE WARS");
+    put_text(SCLD_SCREEN_A,  5,  4, "version 1.0 (20260623)");
+    put_text(SCLD_SCREEN_A,  2,  7, "CONTROLS");
     put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
-    put_text(SCLD_SCREEN_A,  2, 10, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text(SCLD_SCREEN_A,  2, 12, "3 TWO JOYSTICKS (TS2068)");
-    put_text(SCLD_SCREEN_A,  2, 15, "0 START GAME");
-    /* Music credit. The AY tune "Spectrumizer" is by Pator (@paatorr on X).
-     * (Plays only on AY machines; the credit shows on every machine.) */
-    put_text(SCLD_SCREEN_A,  3, 18, "MUSIC: PATOR  @PAATORR ON X");
-    put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
-    put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
+    put_text(SCLD_SCREEN_A,  2,  9, "2 KEYS MOVE  KEMPSTON FIRE");
+    put_text(SCLD_SCREEN_A,  2, 10, CTRL_DUAL_LABEL);
+    put_text(SCLD_SCREEN_A,  2, 12, "SOUND");
+    put_text(SCLD_SCREEN_A,  2, 13, "4 BEEPER");
+    put_text(SCLD_SCREEN_A,  2, 14, "5 MUSIC+FX");
+    put_text(SCLD_SCREEN_A,  2, 15, "6 FX");
+    put_text(SCLD_SCREEN_A,  2, 16, music_status_text());
+    put_text(SCLD_SCREEN_A,  2, 18, "0 START GAME");
+    put_text(SCLD_SCREEN_A,  5, 20, "\x7F 2026 Claude & Codex");
+    put_text(SCLD_SCREEN_A,  0, 22, "human in the loop: @mpasternak79");
+    put_text(SCLD_SCREEN_A,  8, 23, "music: @paatorr");
 
-    title_attr_row(3, ATTR(1, 0, 5));      /* bright-cyan title (base colour) */
+    title_base_attrs(sel, snd);
 
     for (;;) {
-        /* highlight the selected scheme bright yellow; START is bright green */
-        title_attr_row( 8, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(10, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(12, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(15, ATTR(1, 0, 4));
+        title_base_attrs(sel, snd);
+        title_shine(shine_i, shine_c);
 
-        /* ---- shine sweep: paint title-letter row (row 3) only --------------- */
-        title_shine(s);
-
-        /* Advance (or pause) the sweep position */
         if (pause > 0u) {
             pause--;
             if (pause == 0u) {
-                s = SHINE_S_MIN;           /* restart the sweep */
+                shine_i = 0u;
+                shine_c = shine_col0[0];
             }
         } else {
-            if (s < SHINE_S_MAX) {
-                s++;
+            if (shine_c < shine_col1[shine_i]) {
+                shine_c++;
+            } else if (shine_i < (SHINE_ROWS - 1u)) {
+                shine_i++;
+                shine_c = shine_col0[shine_i];
             } else {
-                pause = SHINE_PAUSE;       /* glint exited right — begin pause  */
+                pause = SHINE_PAUSE;
             }
         }
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
         else if (in_key_pressed(IN_KEY_SCANCODE_3)) sel = CTRL_DUAL_STICK;
+        else if (in_key_pressed(IN_KEY_SCANCODE_4)) {
+            snd = SOUND_BEEPER;
+            if (music_is_playing()) {
+                music_init(SOUND_BEEPER);
+            }
+        }
+        else if (in_key_pressed(IN_KEY_SCANCODE_5)) snd = SOUND_MUSIC_FX;
+        else if (in_key_pressed(IN_KEY_SCANCODE_6)) {
+            snd = SOUND_FX;
+            if (music_is_playing()) {
+                music_init(SOUND_FX);
+            }
+        }
         else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
 
         scld_wait();
-        music_tick();                  /* keep the menu tune running */
     }
-    return sel;
+    *ctrl_out = sel;
+    *sound_out = snd;
 }
 
 int main(void)
@@ -625,8 +654,10 @@ int main(void)
      * lives, shields. game_new() seeds it; the HUD reads g.score for its
      * big-attribute-digit background. */
     static game_state_t g;
+    static u8 menu_sound = 0xFFu;
     u8        i;
     u8        cooldown = 0;
+    u8        boost_was_down = 0u;
     u8        tick     = 0;            /* frame counter (thruster flicker etc.)  */
     u8        invuln   = 0;            /* i-frames after a hit                    */
     u8        bullet_count = 0;        /* active bullet slots, avoids empty scans */
@@ -651,19 +682,30 @@ int main(void)
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
     z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
     rng_seed(0xACE1u);
-    music_init();                     /* probe AY; load+start the tune (silent  */
-                                      /* no-op on a beeper-only machine)        */
-
-    { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
+    { u8 d; for (d = 0; d < 8u; d++) spr_preshift(PS_SHIP_DIR(d), spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
+#ifndef ZX128_PAGE_FLIP
     spr_preshift(ps_enemy_vbounce, spr_enemy_vbounce);
     spr_preshift(ps_enemy_hbounce, spr_enemy_hbounce);
     spr_preshift(ps_enemy_chase,   spr_enemy_chase);
     spr_preshift(ps_enemy_hunter,  spr_enemy_hunter);
+#endif
     hud_init();                                  /* build the HUD heart sprite */
 
-    /* Title + control-scheme menu; the choice drives input_read() all game. */
-    input_set_scheme(title_screen());
+main_menu:
+    /* SOUND is applied after START on a cold title. Returning from a game keeps
+     * a running tune alive until the player explicitly selects BEEPER or FX. */
+    {
+        u8 ctrl_choice;
+        u8 sound_choice;
+        if (menu_sound == 0xFFu) {
+            menu_sound = music_default_sound();
+        }
+        title_screen(&ctrl_choice, &sound_choice, menu_sound);
+        menu_sound = sound_choice;
+        input_set_scheme(ctrl_choice);
+        music_init(sound_choice);
+    }
 
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
@@ -673,13 +715,22 @@ int main(void)
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
+    bullet_count = 0u;
     enemies_spawn(&enemies, g.wave);
     enemy_count = enemies_alive_count(&enemies);
     wave_total = wave_time_frames(g.wave);   /* full bar; clock starts after the
                                               * telegraph (when enemies go live) */
     wave_timer = wave_total;
+    wave_secs  = 0xFFFFu;
+    cooldown = 0u;
+    tick = 0u;
+    invuln = 0u;
+    spawn_timer = TELEGRAPH_FRAMES;
+    recoil_timer = 0u;
+    recoil_dx = 0;
+    recoil_dy = 0;
+    boost_was_down = 0u;
     hud_invalidate();                 /* force first widget paint               */
-                    g_dash_dot = 0xFFu;
     hud_draw_lives(g.lives);
     hud_draw_shields(g.shields);
     prevn[0] = 0;
@@ -692,8 +743,30 @@ int main(void)
         tick++;
 
         /* ---- input + player ---- */
-        input_read(player.facing, &in);
-        player_update(&player, &in);
+        {
+            u8 dash_t0;
+            u8 dash_cd0;
+            u8 boost_pressed;
+            u8 dash_fail = 0u;
+            input_read(player.facing, &in);
+            boost_pressed = (u8)(in.boost && !boost_was_down);
+            dash_t0 = player.dash_t;
+            dash_cd0 = player.dash_cd;
+            player_update(&player, &in);
+
+            if (in.boost && dash_t0 == 0u && dash_cd0 == 0u &&
+                    (in.move_dx || in.move_dy) && player.dash_t > 0u) {
+                sfx_play(SFX_DASH);
+            } else if (boost_pressed && dash_t0 == 0u && dash_cd0 > 0u) {
+                sfx_play(SFX_DASH_FAIL);
+                dash_fail = 1u;
+            }
+            if (!dash_fail && dash_cd0 > 0u && player.dash_cd == 0u &&
+                    player.dash_t == 0u) {
+                sfx_play(SFX_DASH_READY);
+            }
+            boost_was_down = in.boost;
+        }
 
         if (cooldown) {
             cooldown--;
@@ -727,7 +800,7 @@ int main(void)
         if (spawn_timer > 0u) {
             /* ---- spawn telegraph: enemies inert+invisible; cells pulse ---- */
             spawn_timer--;
-            telegraph_blink(&enemies, tick);
+            telegraph_blink(&enemies, spawn_timer);
             if (spawn_timer == 0u) {
                 telegraph_clear(&enemies);      /* restore before they appear */
             }
@@ -743,33 +816,58 @@ int main(void)
             enemies_update(&enemies, player.x, player.y, &bullets);
             /* A bullet is the ONLY way collide kills an enemy, so on the common
              * bulletless frame the whole snapshot/collide/rescan is a no-op --
-             * skip it. When bullets are live, snapshot the alive flags, run
-             * collide, and only rescan for kills if it actually reported any. */
+             * skip it. When bullets are live, collide returns a kill mask so we
+             * score only the killed slots; wounded chasers are displaced but
+             * stay alive and do not score until the second hit. */
             {
                 if (bullet_count) {
                     u8 kill_mask = 0u;
-                    u8 bit = 1u;
+                    u8 wound_mask = 0u;
                     u8 kills;
-                    kills = collide_bullets_enemies_mask(&bullets, &enemies, &kill_mask);
+                    kills = collide_bullets_enemies_masks(&bullets, &enemies,
+                                                          &kill_mask, &wound_mask);
+                    bullet_count = bullets_count(&bullets);
+                    if (wound_mask) {
+                        enemies_jump_wounded_chasers(&enemies, wound_mask);
+                        sfx_play(SFX_HIT);
+                    }
                     if (kills) {
                         enemy_t *e = enemies.e;
+                        u8 bit = 1u;
                         u8 scored = 0u;
-                        bullet_count = (u8)(bullet_count - kills);
+                        u8 killed_n = 0u;
+                        u8 killed_level[MAX_BULLETS];
+                        u8 killed_x[MAX_BULLETS];
+                        u8 killed_y[MAX_BULLETS];
                         enemy_count = (u8)(enemy_count - kills);
-                        bit = 1u;
                         for (i = MAX_ENEMIES; i != 0u; i--, e++) {
                             if (kill_mask & bit) {
-                                u8 xl = score_add(&g.score,
-                                          score_enemy_points(e->level));
+                                u8 level = e->level;
+                                u8 xl = score_add(&g.score, score_enemy_points(level));
                                 g.lives = (u8)(g.lives + xl);  /* extra life(s)  */
                                 if (xl) {
                                     sfx_play(SFX_EXTRA_LIFE);
                                     hud_draw_lives(g.lives);
                                 }
                                 fx_spawn(e->x, e->y);
+                                if (killed_n < MAX_BULLETS) {
+                                    killed_level[killed_n] = level;
+                                    killed_x[killed_n] = e->x;
+                                    killed_y[killed_n] = e->y;
+                                    killed_n++;
+                                }
                                 scored = 1u;
                             }
                             bit = (u8)(bit << 1);
+                        }
+                        for (i = 0u; i < killed_n; i++) {
+                            if (killed_level[i] == ENEMY_HUNTER &&
+                                enemy_count <= (u8)(MAX_ENEMIES - 2u) &&
+                                (rng_byte() & 1u)) {
+                                enemy_count = (u8)(enemy_count +
+                                    enemies_spawn_hunter_clones(&enemies,
+                                                               killed_x[i], killed_y[i]));
+                            }
                         }
                         if (scored) {
                             hud_score(&g.score, 0u);           /* points landed   */
@@ -823,12 +921,15 @@ int main(void)
                     }
                     if (g.lives == 0u) {
                         /* ---- GAME OVER (spec §7): show score + wave, then offer
-                         * FIRE/SPACE resume-from-death-wave or Q fresh game. ---- */
+                         * FIRE/SPACE resume, Q fresh game, ENTER title menu. ---- */
                         u8 death_wave = g.wave;
-                        if (game_over_screen(&g, death_wave) == 0u) {
+                        u8 over = game_over_screen(&g, death_wave);
+                        if (over == 0u) {
                             game_resume_from_wave(&g, death_wave);  /* score 0, keep wave */
-                        } else {
+                        } else if (over == 1u) {
                             game_new(&g);                            /* wave 1     */
+                        } else {
+                            goto main_menu;
                         }
                     } else {
                         g.shields = START_SHIELDS;    /* new life, full shields    */
@@ -840,6 +941,8 @@ int main(void)
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
+                    bullets_init(&bullets);
+                    bullet_count = 0u;
                     enemies_spawn(&enemies, g.wave);  /* re-init the current wave  */
                     enemy_count = enemies_alive_count(&enemies);
                     wave_total = wave_time_frames(g.wave);
@@ -847,11 +950,11 @@ int main(void)
                     wave_secs  = 0xFFFFu;
                     spawn_timer = TELEGRAPH_FRAMES;   /* telegraph the respawn     */
                     hud_invalidate();                 /* bitmaps + bars were wiped  */
-                    g_dash_dot = 0xFFu;
                     hud_draw_lives(g.lives);
                     hud_draw_shields(g.shields);
                     cooldown = 0;
                     recoil_timer = 0u;
+                    boost_was_down = 0u;
                     invuln = INVULN_FRAMES;
                 }
             }
@@ -897,7 +1000,7 @@ int main(void)
                             dy = (u8)(player.y + RECOIL_PIXELS);
                         }
                     }
-                    SPR_DRAW(back, dx, dy, ps_ship_dir[fdir]);
+                    SPR_DRAW(back, dx, dy, PS_SHIP_DIR(fdir));
                     out->x = dx; out->y = dy;
                     out->kind = KIND_SPRITE; out++; n++;
 
@@ -923,22 +1026,18 @@ int main(void)
                     }
                 }
             }
-            {                                                       /* bullets (cheap) */
-                if (bullet_count) {
-                    const bullet_t *b = bullets.b;
-                    for (i = MAX_BULLETS; i != 0u; i--, b++) {
-                        if (b->active) {
-                            BUL_DRAW(back, b->x, b->y);
-                            out->x = b->x; out->y = b->y;
-                            out->kind = KIND_BULLET; out++; n++;
-                        }
+            if (bullet_count) {                                     /* bullets (cheap) */
+                const bullet_t *b = bullets.b;
+                for (i = MAX_BULLETS; i != 0u; i--, b++) {
+                    if (b->active) {
+                        BUL_DRAW(back, b->x, b->y);
+                        out->x = b->x; out->y = b->y;
+                        out->kind = KIND_BULLET; out++; n++;
                     }
                 }
             }
         }
         prevn[bi] = n;
-
-        hud_dash_dot(player.dash_cd);   /* green dot on the top frame = dash ready */
 
         /* Explosion sound SYNCED with the animation: while any hit-pop is on
          * screen, emit a short noisy crackle each frame so the whole burst is
@@ -948,7 +1047,7 @@ int main(void)
         }
 
         scld_present();                 /* HALT to 50 Hz, then page-flip */
-        music_tick();                   /* advance the AY tune one frame */
+        /* music is driven by the 50 Hz IM2 ISR -- no per-frame tick here */
     }
     /* never reached */
 }

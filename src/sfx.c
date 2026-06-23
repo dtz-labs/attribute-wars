@@ -55,12 +55,15 @@ static const sfx_params_t sfx_table[SFX_N] = {
     /* SFX_DEATH      */ { 32u, 250u },   /* frozen death_anim -> budget free   */
     /* SFX_EXTRA_LIFE */ {  6u, 140u },   /* live: ~21.8k T  rising chime       */
     /* SFX_BONUS      */ { 10u,  90u },   /* ~19.8k T, before the next telegraph */
+    /* SFX_DASH       */ {  4u,  42u },   /* quick high lunge tick              */
+    /* SFX_DASH_READY */ {  6u,  50u },   /* short ready chime                  */
+    /* SFX_DASH_FAIL  */ { 24u,  22u },   /* low cooldown bump                  */
 };
 
 void sfx_play(u8 id)
 {
     if (id >= SFX_N) return;
-    if (music_is_on()) {        /* AY present: play on channel C (no beeper stall) */
+    if (music_is_on()) {        /* AY mode: play on channel C (no beeper stall) */
         music_sfx(id);
         return;
     }
@@ -75,7 +78,7 @@ void sfx_play(u8 id)
 void sfx_noise(void)
 {
     u8 j;
-    if (music_is_on()) {        /* AY present: noise crackle on channel C */
+    if (music_is_on()) {        /* AY mode: noise crackle on channel C */
         music_sfx_noise();
         return;
     }

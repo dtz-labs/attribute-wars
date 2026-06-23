@@ -34,8 +34,8 @@ int main(void)
         for (i = 0; i < MAX_BULLETS; i++) bs.b[i].active = 0;
         for (i = 0; i < MAX_ENEMIES; i++) es.e[i].alive = 0;
 
-        es.e[0].x = 50; es.e[0].y = 50; es.e[0].alive = 1;
-        es.e[1].x = 90; es.e[1].y = 90; es.e[1].alive = 1;
+        es.e[0].x = 50; es.e[0].y = 50; es.e[0].level = ENEMY_BOUNCE; es.e[0].alive = 1;
+        es.e[1].x = 90; es.e[1].y = 90; es.e[1].level = ENEMY_BOUNCE; es.e[1].alive = 1;
 
         bs.b[0].x = 52; bs.b[0].y = 51; bs.b[0].active = 1;  /* overlaps e0 */
         bs.b[1].x = 10; bs.b[1].y = 10; bs.b[1].active = 1;  /* hits nothing */
@@ -63,12 +63,39 @@ int main(void)
         for (i = 0; i < MAX_BULLETS; i++) bs.b[i].active = 0;
         for (i = 0; i < MAX_ENEMIES; i++) es.e[i].alive = 0;
 
-        es.e[0].x = 50; es.e[0].y = 50; es.e[0].alive = 1;
-        es.e[1].x = 51; es.e[1].y = 50; es.e[1].alive = 1;  /* both under bullet */
+        es.e[0].x = 50; es.e[0].y = 50; es.e[0].level = ENEMY_BOUNCE; es.e[0].alive = 1;
+        es.e[1].x = 51; es.e[1].y = 50; es.e[1].level = ENEMY_BOUNCE; es.e[1].alive = 1;  /* both under bullet */
         bs.b[0].x = 50; bs.b[0].y = 50; bs.b[0].active = 1;
 
         kills = collide_bullets_enemies(&bs, &es);
         check("one bullet -> one kill", kills == 1);
+    }
+
+    /* Fresh chasers take a first hit as a wound, consuming the bullet but not scoring. */
+    {
+        bullets_t bs;
+        enemies_t es;
+        u8 i, kills, kill_mask, wound_mask;
+
+        for (i = 0; i < MAX_BULLETS; i++) bs.b[i].active = 0;
+        for (i = 0; i < MAX_ENEMIES; i++) es.e[i].alive = 0;
+
+        es.e[2].x = 70; es.e[2].y = 70; es.e[2].level = ENEMY_CHASE; es.e[2].alive = 2;
+        bs.b[0].x = 72; bs.b[0].y = 70; bs.b[0].active = 1;
+
+        kills = collide_bullets_enemies_masks(&bs, &es, &kill_mask, &wound_mask);
+        check("first chaser hit does not kill", kills == 0);
+        check("first chaser hit kill mask clear", kill_mask == 0u);
+        check("first chaser hit wound mask set", wound_mask == 0x04u);
+        check("first chaser hit consumes bullet", bs.b[0].active == 0);
+        check("first chaser hit leaves hp1", es.e[2].alive == 1);
+
+        bs.b[0].x = 72; bs.b[0].y = 70; bs.b[0].active = 1;
+        kills = collide_bullets_enemies_masks(&bs, &es, &kill_mask, &wound_mask);
+        check("second chaser hit kills", kills == 1);
+        check("second chaser hit kill mask set", kill_mask == 0x04u);
+        check("second chaser hit wound mask clear", wound_mask == 0u);
+        check("second chaser hit destroys", es.e[2].alive == 0);
     }
 
     /* player_hit: caught only by a live, overlapping enemy. */
@@ -76,7 +103,7 @@ int main(void)
         enemies_t es;
         u8 i;
         for (i = 0; i < MAX_ENEMIES; i++) es.e[i].alive = 0;
-        es.e[0].x = 100; es.e[0].y = 100; es.e[0].alive = 1;
+        es.e[0].x = 100; es.e[0].y = 100; es.e[0].level = ENEMY_BOUNCE; es.e[0].alive = 1;
 
         check("player clear when far",  !player_hit(10, 10, &es));
         check("player caught on overlap", player_hit(103, 102, &es));

@@ -22,6 +22,9 @@ enum {
     SFX_DEATH,
     SFX_EXTRA_LIFE,
     SFX_BONUS,
+    SFX_DASH,
+    SFX_DASH_READY,
+    SFX_DASH_FAIL,
     SFX_N           /* sentinel / count */
 };
 

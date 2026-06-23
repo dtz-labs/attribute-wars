@@ -12,7 +12,7 @@
 ;   through ports detected at runtime, supporting 128K/+2/+3 AND TS2068/TC2068.
 ;
 ; Also here:
-;   _ay_detect  -- probe both schemes, latch the answering ports. C calls it once.
+;   _ay_detect  -- detect a 2068 and latch its AY ports. C calls it once.
 ;   _pt3_play_safe -- IY-preserving shim around ay_vt2_play (which trashes IY).
 ;
 ; Conventions (mirror blit.asm/sfx.asm): SECTION code_user; never touch IY except
@@ -24,14 +24,22 @@
         PUBLIC  _pt3_init               ; void pt3_init(void): load+init the tune
         PUBLIC  _pt3_play_safe          ; void pt3_play_safe(void): IY-safe play
         PUBLIC  _pt3_mute               ; void pt3_mute(void): silence the AY
+        PUBLIC  _music_im2_init          ; void music_im2_init(void): switch to IM2
+        PUBLIC  _music_im1_init          ; void music_im1_init(void): switch to IM1
+        PUBLIC  _ay_default_sound        ; u8  ay_default_sound(void): menu default
+        PUBLIC  _ay_machine_status       ; u8  ay_machine_status(void): machine|AY
+        PUBLIC  _ay_sfx_out              ; void ay_sfx_out(void): FX-only channel C
+        PUBLIC  _ay_sfx_mute             ; void ay_sfx_mute(void): silence FX-only C
         PUBLIC  asm_vt_hardware_out     ; override of z88dk's 128K-only output
         PUBLIC  asm_vt_hardware_out_A0
 
         EXTERN  asm_VT_AYREGS           ; 14-byte computed AY register file (player)
+        EXTERN  asm_VT_SETUP            ; player setup/status flags (bit7=loop)
         EXTERN  asm_VT_INIT             ; vendored player: init, module addr in HL
         EXTERN  asm_VT_PLAY             ; vendored player: play one frame
         EXTERN  asm_VT_MUTE             ; vendored player: silence all channels
         EXTERN  _spectrumizer_pt3       ; tune.asm: the PT3 module (label = addr)
+        EXTERN  _music_tick             ; C: play one frame + decay SFX (ISR calls it)
 
         ; channel-C sound-effect state (music.c); overlaid by sfx_merge below
         EXTERN  _asfx_vol               ; u8  0=inactive, else amplitude 1..15
@@ -55,50 +63,139 @@ sig_timex:
 SIG_ADDR equ 0x113D
 
 ; ---------------------------------------------------------------------------
-; u8 ay_detect(void) -- return 1 (and latch the AY ports) if music can play.
-; Two SAFE steps, in order:
-;   1. Probe the standard 0xFFFD/0xBFFD AY. Both are ODD ports, so they can
-;      never be the ULA (which decodes EVEN ports) -- safe on every machine.
-;      Covers a ZX 128/+2/+3 and any TC2048/48K with a standard AY interface.
-;   2. If absent, ROM-signature the machine: a TS2068/TC2068 has ASCII "Timex"
-;      at 0x113D; a TC2048 does not. ROM reads have no side effects, so a TC2048
-;      is never disturbed. ONLY on a confirmed 2068 do we enable the AY at
-;      0xF5/0xF6 -- there 0xF6 is the AY; on a TC2048 it would be the ULA, so we
-;      must be certain before touching it.
-; Returns 0 (stay silent) on a beeper-only machine.
+; u8 ay_detect(void) -- identify the machine RELIABLY, latch the AY ports, and
+; return 1 if music can play (else 0 = beeper). Order matters:
+;   1. ROM "Timex" at 0x113D -> TS2068/TC2068 -> AY at 0xF5/0xF6.
+;   2. Else, is this a Timex (SCLD)? IN 0xFF echoes the last OUT on a TC2048/2068
+;      but floats on a 48K/128K. A Timex that is NOT a 2068 is a TC2048 -> BEEPER.
+;      We must NOT probe 0xFFFD on a TC2048: emulators answer that probe with no
+;      real AY behind it, which would wrongly silence the beeper.
+;   3. Else (48K / ZX 128), the 0xFFFD/0xBFFD probe IS reliable: a 128K answers
+;      (real AY) -> use it; a bare 48K does not -> beeper.
+; All steps are side-effect-safe (ROM reads; 0xFF only ever 0x00/0x01; 0xFFFD/
+; 0xBFFD are odd, never the ULA).
 ; ---------------------------------------------------------------------------
 _ay_detect:
-        ; --- step 1: standard location (odd ports, ULA-safe) ---
-        ld      de,0xFFFD
-        ld      (ay_sel),de
-        ld      bc,0xBFFD
-        ld      (ay_dat),bc
-        ld      bc,0xFFFD
-        ld      (ay_rd),bc
-        call    ay_probe
-        or      a
-        ret     nz                      ; standard AY found -> use it (A=1)
-
-        ; --- step 2: ROM signature for a TS2068/TC2068 ---
+        ; --- step 1: ROM signature -> TC2068 ---
         ld      hl,SIG_ADDR
         ld      de,sig_timex
         ld      b,5
 sig_cmp:
         ld      a,(de)
         cp      (hl)
-        jr      nz,det_fail             ; mismatch -> not a 2068
+        jr      nz,not_2068             ; mismatch -> not a 2068
         inc     hl
         inc     de
         djnz    sig_cmp
-        ; confirmed TS2068/TC2068 -> latch its AY at 0xF5 (select) / 0xF6 (data+read)
-        ld      de,0x00F5
+        ld      de,0x00F5               ; confirmed 2068 -> 0xF5 (sel) / 0xF6 (dat+rd)
         ld      (ay_sel),de
         ld      bc,0x00F6
         ld      (ay_dat),bc
         ld      (ay_rd),bc
         ld      a,1
+        ld      l,a                     ; sdcc returns 8-bit values in L
         ret
-det_fail:
+not_2068:
+        ; Not a 2068 -> default to BEEPER. We deliberately do NOT auto-probe
+        ; 0xFFFD: emulators answer that probe with no real AY behind it, which
+        ; wrongly silences the beeper and (worse) pushes a TC2048 into the AY/IM2
+        ; path -> crash. AY on a ZX 128 is enabled by the title-screen SOUND menu
+        ; (the human knows their machine); see _ay_set_ports_std.
+det_beeper:
+        xor     a
+        ld      l,a                     ; sdcc returns 8-bit values in L
+        ret
+
+; void ay_set_ports_std(void) -- latch the standard 0xFFFD/0xBFFD AY (for the
+; SOUND menu: a ZX 128 the user explicitly switched to music/fx). Odd ports, so
+; safe on every machine even if no AY is actually there (just silent).
+        PUBLIC  _ay_set_ports_std
+_ay_set_ports_std:
+        ld      de,0xFFFD
+        ld      (ay_sel),de
+        ld      bc,0xBFFD
+        ld      (ay_dat),bc
+        ld      bc,0xFFFD
+        ld      (ay_rd),bc
+        ret
+
+; u8 ay_default_sound(void) -- return the title-screen default SOUND choice:
+;   SOUND_MUSIC_FX (1) on a ROM-confirmed 2068 or standard AY machine,
+;   SOUND_BEEPER   (0) on a TC2048 or anything else.
+; This never enables IM2 and never touches 0xF5/0xF6 unless the ROM signature
+; already proved a 2068. The standard AY probe is gated behind "not Timex SCLD",
+; so ZEsarUX's TC2048 false-positive cannot select MUSIC+FX by default.
+_ay_default_sound:
+        call    _ay_detect              ; 2068? latches 0xF5/0xF6, returns A/L=1
+        or      a
+        jr      nz,ads_music
+        call    scld_present_p          ; TC2048/2068 SCLD? 2068 was ruled out
+        or      a
+        jr      nz,ads_beeper           ; TC2048 -> BEEPER
+        call    _ay_set_ports_std       ; ZX 128 / 48K+AY: odd ports, ULA-safe
+        call    ay_probe
+        or      a
+        jr      z,ads_beeper
+ads_music:
+        ld      a,1                     ; SOUND_MUSIC_FX
+        ld      l,a
+        ret
+ads_beeper:
+        xor     a                       ; SOUND_BEEPER
+        ld      l,a
+        ret
+
+; u8 ay_machine_status(void) -- packed title-screen hardware status:
+;   low nibble  = machine: 0 ZX48, 1 ZX128, 2 TC2048, 3 TC2068/TS2068
+;   high nibble = AY:      0 none, 1 standard ZX128/Melodik, 2 Timex 2068
+; This follows the same conservative rules as _ay_default_sound: never probe
+; 0xFFFD on a TC2048 because ZEsarUX can false-positive there.
+_ay_machine_status:
+        call    _ay_detect              ; ROM-confirmed 2068?
+        or      a
+        jr      z,ams_not_2068
+        ld      a,0x23                  ; machine=3, AY=2
+        ld      l,a
+        ret
+ams_not_2068:
+        call    scld_present_p
+        or      a
+        jr      z,ams_sinclair
+        ld      a,0x02                  ; machine=2, AY=0
+        ld      l,a
+        ret
+ams_sinclair:
+        call    _ay_set_ports_std
+        call    ay_probe
+        or      a
+        jr      z,ams_zx48
+        ld      a,0x11                  ; machine=1, AY=1
+        ld      l,a
+        ret
+ams_zx48:
+        xor     a                       ; machine=0, AY=0
+        ld      l,a
+        ret
+
+; scld_present_p -- A=1 if a Timex SCLD answers port 0xFF (it returns the last
+; byte written; a 48K/128K floats). Writes only 0x01/0x00 (bits 6-7 stay 0) and
+; leaves it at 0x00 (= show screen A, matching scld_init). Clobbers A,BC.
+scld_present_p:
+        ld      bc,0x00FF
+        ld      a,0x01
+        out     (c),a                   ; OUT 0xFF, 0x01
+        in      a,(c)                   ; IN  0xFF -> 0x01 on a Timex
+        cp      0x01
+        jr      nz,scld_no
+        ld      bc,0x00FF
+        xor     a
+        out     (c),a                   ; OUT 0xFF, 0x00 (back to screen A)
+        in      a,(c)
+        or      a                       ; echoes 0x00 ?
+        jr      nz,scld_no
+        ld      a,1
+        ret
+scld_no:
         xor     a
         ret
 
@@ -164,6 +261,63 @@ sel_read:
         out     (c),a                   ; latch register address
         ld      bc,(ay_rd)
         in      a,(c)                   ; read data
+        ret
+
+; ---------------------------------------------------------------------------
+; FX-only AY output. When the title menu chooses SOUND=FX, the PT3 player is not
+; initialised, but IM2 still ticks _music_tick at 50 Hz. These routines write a
+; minimal channel-C voice directly from the same _asfx_* state that sfx_merge
+; uses in MUSIC+FX mode.
+; ---------------------------------------------------------------------------
+_ay_sfx_out:
+        ld      a,(_asfx_vol)
+        or      a
+        ret     z
+        ld      d,a                     ; D = volume to write last
+
+        ld      b,8                     ; amp A = 0
+        ld      c,0
+        call    sel_write
+        ld      b,9                     ; amp B = 0
+        ld      c,0
+        call    sel_write
+
+        ld      a,(_asfx_kind)
+        or      a
+        jr      nz,aso_noise
+        ld      a,(_asfx_tper)          ; tone C fine (R4)
+        ld      b,4
+        ld      c,a
+        call    sel_write
+        ld      a,(_asfx_tper+1)        ; tone C coarse (R5)
+        ld      b,5
+        ld      c,a
+        call    sel_write
+        ld      b,7
+        ld      c,0x3B                  ; A/B off, C tone on, C noise off
+        call    sel_write
+        jr      aso_amp
+aso_noise:
+        ld      a,(_asfx_nper)          ; noise period (R6)
+        ld      b,6
+        ld      c,a
+        call    sel_write
+        ld      b,7
+        ld      c,0x1F                  ; A/B off, C tone off, C noise on
+        call    sel_write
+aso_amp:
+        ld      b,10                    ; amp C = SFX volume
+        ld      c,d
+        call    sel_write
+        ret
+
+_ay_sfx_mute:
+        ld      b,10                    ; amp C = 0
+        ld      c,0
+        call    sel_write
+        ld      b,7
+        ld      c,0x3F                  ; disable tone/noise on all channels
+        call    sel_write
         ret
 
 ; ---------------------------------------------------------------------------
@@ -272,6 +426,12 @@ _pt3_play_safe:
         push    ix
         push    iy
         call    asm_VT_PLAY
+        ld      a,(asm_VT_SETUP)
+        bit     7,a                     ; player passed the PT3 loop/end point
+        jr      z,pt3_play_done
+        ld      hl,_spectrumizer_pt3    ; restart from the beginning next tick
+        call    asm_VT_INIT
+pt3_play_done:
         pop     iy
         pop     ix
         ret
@@ -284,3 +444,83 @@ _pt3_mute:
         pop     iy
         pop     ix
         ret
+
+; ===========================================================================
+; IM2 interrupt-driven music. Ticking the player from the 50 Hz frame interrupt
+; (not the main loop) keeps the tune at exact tempo no matter how long a frame's
+; work takes -- the death explosion, a multi-frame screen clear, a busy wave.
+; The interrupt fires during those blocking sections and plays a music frame
+; right there, so the main loop no longer needs to call music_tick at all.
+;
+; The 257-byte IM2 vector table + the jump-to-handler live in the UNUSED RAM hole
+; AFTER screen B (its attributes end at 0x7AFF; the program starts at 0x8000), so
+; they cost zero program/stack space and nothing else touches them. This hole is
+; genuinely free -- unlike 0x5B00 (the ROM PRINTER BUFFER) and 0x5C00+ (the ROM
+; SYSTEM VARIABLES), which an earlier version wrongly used and which a Spectrum
+; ROM (TC2048 / ZX 128) actively overwrites -> a crash.
+;   table : 257 bytes of 0x7C at 0x7B00            -> I = 0x7B
+;   vector: the CPU reads I*256 + (floating bus 0xFF) = the word at 0x7BFF = 0x7C7C
+;   0x7C7C: JP isr_main
+; Only set up when an AY is present (music_init); a beeper-only machine keeps the
+; ROM's IM1 handler unchanged.
+; ===========================================================================
+IM2_TABLE equ 0x7B00            ; 256-aligned, in the free hole after screen B
+IM2_FILL  equ 0x7C              ; table fill byte -> vector IM2_FILL*256+IM2_FILL
+IM2_VEC   equ 0x7C7C            ; = IM2_FILL*256 + IM2_FILL
+
+; void music_im2_init(void) -- build the IM2 table + jump, switch IM1 -> IM2.
+_music_im2_init:
+        di
+        ld      hl,IM2_TABLE            ; fill 257 bytes with IM2_FILL
+        ld      de,IM2_TABLE+1
+        ld      bc,256
+        ld      (hl),IM2_FILL
+        ldir
+        ld      a,0xC3                  ; JP isr_main at the vector address
+        ld      (IM2_VEC),a
+        ld      hl,isr_main
+        ld      (IM2_VEC+1),hl
+        ld      a,IM2_TABLE >> 8        ; I = high byte of the table (0x7B)
+        ld      i,a
+        im      2
+        ei
+        ret
+
+; void music_im1_init(void) -- return to the ROM's normal interrupt mode.
+_music_im1_init:
+        di
+        im      1
+        ei
+        ret
+
+; isr_main -- the 50 Hz handler. Saves EVERYTHING the interrupted code or the
+; player could rely on: the main set, IX, IY (sdcc_iy frame pointer), and the
+; ALTERNATE bank (the PT3 player uses EXX). Then ticks the music and RETIs.
+isr_main:
+        push    af
+        push    bc
+        push    de
+        push    hl
+        push    ix
+        push    iy
+        ex      af,af'
+        push    af
+        exx
+        push    bc
+        push    de
+        push    hl
+        call    _music_tick             ; play one frame + decay SFX (no-op if !on)
+        pop     hl
+        pop     de
+        pop     bc
+        exx
+        pop     af
+        ex      af,af'
+        pop     iy
+        pop     ix
+        pop     hl
+        pop     de
+        pop     bc
+        pop     af
+        ei
+        reti

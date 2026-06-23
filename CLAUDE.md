@@ -8,18 +8,21 @@ A Geometry-Wars-inspired **twin-stick shooter for the Timex TC2048** (Z80A @ 3.5
 
 ## Commands
 
-- **Build the game:** `./build.sh` → produces `build/game.tap`. Requires z88dk at `~/Programowanie/z88dk` (the script sets `PATH`/`ZCCCFG` itself). Compiles the C sources + `src/blit.asm` with `zcc +zx -SO3 -clib=sdcc_iy`. ORG defaults to `0x8000` (no `-zorg`).
-- **Run / verify:** `./run-zesarux.sh` launches `build/game.tap` in **ZEsarUX** as a `TC2048` (`--enabletimexvideo`, `--joystickemulated Kempston`). ZEsarUX is the preferred Timex emulator here — not Fuse (the macOS Fuse build has flaky HID joystick support and no headless screenshot). Controls: move with `5/6/7/8` (cursor) or a Kempston pad; fire with `0` or `Q W E / A D / Z X C`.
+- **Build targets:** `make` prints available targets. `make all` builds every platform TAP in parallel; `make timex`, `make zx128`, and `make zx48` build one platform. `make TARGET=zx128` is also supported.
+- **Timex build:** `make timex` → `build/game.tap`. Requires z88dk at `~/Programowanie/z88dk` or on `PATH`. Compiles the C sources + hand asm with `zcc +zx -SO3 -clib=sdcc_iy`. ORG defaults to `0x8000` (no `-zorg`).
+- **ZX Spectrum 128K build:** `make zx128` → `build/game-zx128.tap`. It defines `ZX128_PAGE_FLIP`, `ZX_SINCLAIR_DUAL_STICK`, and `ZX128_NO_MUSIC`: RAM page 7 is kept banked into `$C000`, bit 3 of port `$7FFD` flips between page 5/page 7, "two joysticks" means Sinclair 1/2, and PT3 music is disabled in this first 128K build to keep resident code/data/BSS below `$C000`. A checked experiment with PT3 enabled ended at about `$F1C2`, so ZX128 AY music needs a banked tune/player layout before it can ship with this page-flip renderer.
+- **ZX Spectrum 48K build:** `make zx48` → `build/game-zx48.tap`. It defines `ZX48_SINGLE_BUFFER` and `ZX_SINCLAIR_DUAL_STICK`: no SCLD writes, screen B aliases screen A, `scld_present()` is just `HALT`, and "two joysticks" means Sinclair 1/2 rather than TS2068 AY joystick ports.
+- **Run / verify:** `make run-tc2048` launches `build/game.tap` in **ZEsarUX** as a `TC2048` (`--enabletimexvideo`, `--joystickemulated Kempston`). `make run-tc2068` launches the Timex build as `TC2068`. `make run-zx128` launches `build/game-zx128.tap` as `128k`. `make run-zx48` launches `build/game-zx48.tap` as a plain `48k`. ZEsarUX is the preferred Timex emulator here — not Fuse (the macOS Fuse build has flaky HID joystick support and no headless screenshot). Controls: move with `5/6/7/8` (cursor) or a Kempston pad; fire with `0` or `Q W E / A D / Z X C`.
 - **Host unit tests:** `./test/run.sh` builds and runs all `test_*.c` natively with the system `cc` (`-std=c99 -Wall -Wextra -Werror`) — no Z80 toolchain, no emulator, instant red/green. Binaries land in `build/host/`.
 - **Run a single test:** after `./test/run.sh`, just re-run its binary, e.g. `./build/host/test_enemy`. To build one in isolation, mirror the `run.sh` line — e.g. `cc -std=c99 -Wall -Wextra -Werror -Iinclude test/test_player.c src/player.c src/geometry.c src/input.c -o build/host/test_player && ./build/host/test_player`. Each test links only the pure-logic sources it exercises.
 
-`src/measure_main.c` is a **separate, non-shipped** T-state measurement harness (logic vs render cost via `z88dk-ticks`); it is not part of `build.sh` and is built by hand when profiling.
+`src/measure_main.c` is a **separate, non-shipped** T-state measurement harness (logic vs render cost via `z88dk-ticks`); build it with `make measure` when profiling.
 
 ## Architecture
 
 ### The hardware boundary (most important rule)
 
-**Only `src/scld.c` / `include/scld.h` know port `0xFF` and the screen addresses `0x4000`/`0x6000`.** Everything else is buffer-agnostic: the game loop asks `scld.c` for the address of the hidden back buffer and the drawing code blits into whatever base it's handed. This is what keeps the pure-logic modules host-testable on macOS.
+**Only `src/scld.c` / `include/scld.h` know the platform screen backend and display addresses.** On Timex that means SCLD port `0xFF` and screens `0x4000`/`0x6000`; on ZX128 it means `src/zx128_page.asm` writes `$7FFD` to keep RAM page 7 mapped at `$C000` and flip screen 5/7. Everything else is buffer-agnostic: the game loop asks `scld.c` for the address of the hidden back buffer and the drawing code blits into whatever base it's handed. This is what keeps the pure-logic modules host-testable on macOS.
 
 ### Two layers
 
@@ -34,7 +37,7 @@ Double buffering uses the SCLD page-flip (`scld_present()` = HALT to 50 Hz, then
 
 ### Performance budget
 
-Frame = **69,888 T-states** @ 50 Hz (~55k usable). The page-flip itself is ~free; the cost is drawing + per-enemy logic. Measured per-frame at the 6-enemy steady state (worst-case hunter mix, via `z88dk-ticks` on `measure_main.c`): **render ≈ 23.4k T** (7 sprite erase+draw + bullets — now the dominant cost), **enemies_update ≈ 4.9k T** (hand-asm; the C version was ~13.4k), collide ≈ 5.9k, player_hit ≈ 0.9k. Hard caps: **`MAX_ENEMIES = 6`** (`enemy.h`) and **`MAX_BULLETS = 2`** (`bullet.h`) — the `=6` cap predates the asm `enemies_update`, so there may now be headroom for more; re-measure before raising it. **Always profile with `z88dk-ticks` before claiming a perf change** — build `measure_main.c` (a non-shipped harness with `markN()` border-OUT markers), read marker addresses from the `.map`, and run `z88dk-ticks -l 0x8000 -pc 0x8000 -start 0x<a> -end 0x<b> build/measure_CODE.bin`.
+Frame = **69,888 T-states** @ 50 Hz (~55k usable). The page-flip itself is ~free; the cost is drawing + per-enemy logic. Current hard caps: **`MAX_ENEMIES = 7`** (`enemy.h`) and **`MAX_BULLETS = 2`** (`bullet.h`); the hand asm loops in `enemy_update.asm` and `collide.asm` must stay in lockstep with those caps. The previous 8-enemy measurement (worst-case hunter mix, via `z88dk-ticks` on `measure_main.c`, 2026-06-23) was: **render ≈ 25.6k T** (9 sprite erase+draw + bullets), **enemies_update ≈ 8.0k T**, collide ≈ 3.3k, player_hit ≈ 0.5k, PT3 tick ≈ 6.2k; measured subtotal ≈ **43.6k T**, leaving ≈11.4k T to the conservative ~55k usable budget before miscellaneous HUD/input/fx costs. The cap was reduced to 7 for smoother play. **Always profile with `z88dk-ticks` before claiming a perf change** — build `measure_main.c` (a non-shipped harness with `markN()` border-OUT markers), read marker addresses from the `.map`, and run `z88dk-ticks -l 0x8000 -pc 0x8000 -start 0x<a> -end 0x<b> build/measure_CODE.bin`.
 
 ## Project-specific constraints & gotchas
 
@@ -44,6 +47,7 @@ These are real, verified-on-hardware rules — violating them produces crashes o
 - **Never return a struct by value — pass via out-pointer.** SDCC's Z80 backend SIGSEGVs on struct-return-by-value (`make_intent`/`input_read` take `intent_t *out`). It's also faster on Z80.
 - **The input module's header is `controls.h`, not `input.h`.** A header named `input.h` on the include path shadows z88dk's system `<input.h>` (SDCC's `-iquote` still searches it for angle includes). Implementation stays `src/input.c`.
 - **Port `0xFF` is only ever written `0x00` or `0x01`.** Bit 6 is a hardware interrupt kill-switch that software `EI` cannot override — setting it freezes the HALT-paced loop. `scld.c` owns these writes.
+- **ZX Spectrum 128K page flipping lives in its separate build.** The Timex AY/music binary still reaches high memory, but `make zx128` removes PT3 music, keeps resident memory below `$C000`, sets `SP=$C000`, validates with `tools/check_zx128_layout.py`, maps RAM page 7 into `$C000`, and flips display bit 3 on port `$7FFD`. The page values must preserve ROM1 (`$17` for screen 5, `$1F` for screen 7); using `$07/$0F` switches to ROM0 and can reboot under IM1.
 - **Interrupts boot DISABLED.** The z88dk newlib crt starts with DI, so a `HALT` would never wake. `scld_init()` runs `im 1; ei` before the loop — don't bypass it.
 - **Use `z80_outp()` from `<z80.h>`** for port output (`outp()` is undeclared under `sdcc_iy` → implicit-decl bug). Interrupt/HALT primitives come from `<intrinsic.h>`.
 

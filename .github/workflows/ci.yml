@@ -24,21 +24,21 @@ jobs:
         run: ./test/run.sh
 
   build-tap:
-    name: build game.tap (z88dk)
+    name: build TAPs (z88dk)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Compile with z88dk (official Docker image)
         # Checkout runs on the host runner (which has Node for the JS action),
-        # then the build runs inside the z88dk image. build.sh skips its local
-        # PATH/ZCCCFG export when ~/Programowanie/z88dk is absent and uses the
-        # image's preset toolchain instead.
-        run: docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest ./build.sh
+        # then the build runs inside the z88dk image. The Makefile skips its
+        # local PATH/ZCCCFG export when ~/Programowanie/z88dk is absent and uses
+        # the image's preset toolchain instead.
+        run: docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest make all
       - name: Upload TAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: attribute-wars-tap
-          path: build/game.tap
+          name: attribute-wars-taps
+          path: build/*.tap
           if-no-files-found: error
 
   lint:

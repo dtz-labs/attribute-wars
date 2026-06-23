@@ -11,7 +11,10 @@
 #include "arena.h"
 #include "rng.h"
 
-#define DODGE_DIST 24u   /* hunter flees a bullet this close (per axis) */
+#define DODGE_DIST 48u          /* hunter flees a bullet this close (per axis) */
+#define HUNTER_FLEE_SPEED 2     /* fleeing hunters step faster than chasers */
+#define MAX_AXIS_BOUNCERS 2u    /* cap vertical/horizontal bouncers per wave */
+#define CHASER_WOUND_JUMP 24u   /* first hit displacement, enough to dodge */
 
 #if ENEMY_SPEED != 1
 #error "enemies_update uses a 1 px/frame u8 fast path; revisit it for ENEMY_SPEED != 1"
@@ -21,6 +24,7 @@
  * function: sdcc won't inline a static call, and enemies_update calls this 2-4x
  * per enemy -- the call overhead was a big chunk of the logic frame. */
 #define SGN_U8(a, b) ((s8)((a) > (b) ? 1 : ((a) < (b) ? -1 : 0)))
+#define FLEE_STEP(s) ((s8)((s) > 0 ? HUNTER_FLEE_SPEED : ((s) < 0 ? -HUNTER_FLEE_SPEED : 0)))
 
 /* ---- 16-wave difficulty table (spec §5.4) --------------------------------- */
 
@@ -132,6 +136,7 @@ void enemies_spawn(enemies_t *es, u8 wave)
     const wave_t *w;
     u8 pat;
     u8 count, nb, nc, nh;
+    u8 axis_bouncers;
     u8 i;
     enemy_t *e;
     const u8 *px, *py;
@@ -189,11 +194,11 @@ void enemies_spawn(enemies_t *es, u8 wave)
     }
 
     e = es->e;
+    axis_bouncers = 0u;
     for (i = 0u; i < MAX_ENEMIES; i++, e++) {
         if (i < count) {
             e->x = px[i];
             e->y = py[i];
-            e->alive = 1u;
             /* Assign level: first nb bounce, then nc chase, then nh hunter. */
             if (i < nb) {
                 /* Bouncer: a random variant -- ball (diagonal), vertical-only,
@@ -203,11 +208,13 @@ void enemies_spawn(enemies_t *es, u8 wave)
                 u8 var = (u8)(rng_byte() % 3u);
                 s8 sx  = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
                 s8 sy  = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
-                if (var == 1u) {                 /* vertical-only  */
+                if (var == 1u && axis_bouncers < MAX_AXIS_BOUNCERS) {
+                    axis_bouncers++;
                     e->level = ENEMY_BOUNCE_V; e->dx = (s8)0; e->dy = sy;
-                } else if (var == 2u) {          /* horizontal-only*/
+                } else if (var == 2u && axis_bouncers < MAX_AXIS_BOUNCERS) {
+                    axis_bouncers++;
                     e->level = ENEMY_BOUNCE_H; e->dx = sx; e->dy = (s8)0;
-                } else {                         /* diagonal ball  */
+                } else {
                     e->level = ENEMY_BOUNCE;   e->dx = sx; e->dy = sy;
                 }
             } else if (i < (u8)(nb + nc)) {
@@ -219,12 +226,107 @@ void enemies_spawn(enemies_t *es, u8 wave)
                 e->dx = (s8)0;
                 e->dy = (s8)0;
             }
+            e->alive = (u8)((e->level == ENEMY_CHASE) ? 2u : 1u);
         } else {
+            e->x = ARENA_L;
+            e->y = ARENA_T;
+            e->level = ENEMY_BOUNCE;
             e->alive = 0u;
             e->dx = (s8)0;
             e->dy = (s8)0;
         }
     }
+}
+
+static u8 minus8_clamped(u8 v, u8 lo)
+{
+    return (v <= (u8)(lo + 8u)) ? lo : (u8)(v - 8u);
+}
+
+static u8 plus8_clamped(u8 v, u8 hi)
+{
+    return (v >= (u8)(hi - 8u)) ? hi : (u8)(v + 8u);
+}
+
+static u8 minus_clamped(u8 v, u8 lo, u8 amount)
+{
+    return (v <= (u8)(lo + amount)) ? lo : (u8)(v - amount);
+}
+
+static u8 plus_clamped(u8 v, u8 hi, u8 amount)
+{
+    return (v >= (u8)(hi - amount)) ? hi : (u8)(v + amount);
+}
+
+void enemies_jump_wounded_chasers(enemies_t *es, u8 wound_mask)
+{
+    enemy_t *e = es->e;
+    u8 i;
+    u8 bit = 1u;
+
+    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
+        if ((wound_mask & bit) && e->alive && e->level == ENEMY_CHASE) {
+            switch (rng_byte() & 7u) {
+                case 0u:
+                    e->y = minus_clamped(e->y, ARENA_T, CHASER_WOUND_JUMP);
+                    break;
+                case 1u:
+                    e->x = plus_clamped(e->x, ARENA_R, CHASER_WOUND_JUMP);
+                    e->y = minus_clamped(e->y, ARENA_T, CHASER_WOUND_JUMP);
+                    break;
+                case 2u:
+                    e->x = plus_clamped(e->x, ARENA_R, CHASER_WOUND_JUMP);
+                    break;
+                case 3u:
+                    e->x = plus_clamped(e->x, ARENA_R, CHASER_WOUND_JUMP);
+                    e->y = plus_clamped(e->y, ARENA_B, CHASER_WOUND_JUMP);
+                    break;
+                case 4u:
+                    e->y = plus_clamped(e->y, ARENA_B, CHASER_WOUND_JUMP);
+                    break;
+                case 5u:
+                    e->x = minus_clamped(e->x, ARENA_L, CHASER_WOUND_JUMP);
+                    e->y = plus_clamped(e->y, ARENA_B, CHASER_WOUND_JUMP);
+                    break;
+                case 6u:
+                    e->x = minus_clamped(e->x, ARENA_L, CHASER_WOUND_JUMP);
+                    break;
+                default:
+                    e->x = minus_clamped(e->x, ARENA_L, CHASER_WOUND_JUMP);
+                    e->y = minus_clamped(e->y, ARENA_T, CHASER_WOUND_JUMP);
+                    break;
+            }
+        }
+        bit = (u8)(bit << 1);
+    }
+}
+
+static u8 spawn_hunter_clone(enemies_t *es, u8 x, u8 y)
+{
+    enemy_t *e = es->e;
+    u8 i;
+    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
+        if (!e->alive) {
+            e->x = x;
+            e->y = y;
+            e->dx = (s8)0;
+            e->dy = (s8)0;
+            e->level = ENEMY_HUNTER;
+            e->alive = 1u;
+            return 1u;
+        }
+    }
+    return 0u;
+}
+
+u8 enemies_spawn_hunter_clones(enemies_t *es, u8 x, u8 y)
+{
+    u8 spawned = 0u;
+    spawned = (u8)(spawned + spawn_hunter_clone(es,
+        minus8_clamped(x, ARENA_L), plus8_clamped(y, ARENA_B)));
+    spawned = (u8)(spawned + spawn_hunter_clone(es,
+        plus8_clamped(x, ARENA_R), minus8_clamped(y, ARENA_T)));
+    return spawned;
 }
 
 u8 enemies_any_alive(const enemies_t *es)
@@ -297,8 +399,8 @@ void enemies_update(enemies_t *es, u8 px, u8 py, const bullets_t *bs)
                 by = b->y;
                 ady = (u8)(by > ey ? by - ey : ey - by);
                 if (ady >= DODGE_DIST) continue;
-                dx = SGN_U8(ex, bx);     /* flee the bullet */
-                dy = SGN_U8(ey, by);
+                dx = FLEE_STEP(SGN_U8(ex, bx));     /* flee the bullet */
+                dy = FLEE_STEP(SGN_U8(ey, by));
                 break;
             }
         }
