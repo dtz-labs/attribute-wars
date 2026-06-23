@@ -1,22 +1,21 @@
 /*
- * globe.c -- see globe.h. Meridian arcs (dense, N-S) + parallel rings (sparse
- * dots) on a unit sphere, projected with a fixed-point Y-axis rotation.
- * cos(a) = fx_sin[(a+64)&255].
+ * globe.c -- see globe.h. A sparse lat/long grid on a unit sphere, projected
+ * with a fixed-point Y-axis rotation. cos(a) = fx_sin[(a+64)&255]. Two opposite
+ * longitudes are tagged blue so they read as faint blue meridians of dots.
  */
 #include "globe.h"
 #include "fxtab.h"
 
-#define NMERID 8u    /* meridian lines (longitudes)                 */
-#define MLAT   25u   /* latitude samples per meridian (dense arc)   */
-#define NPAR   3u    /* parallel rings                              */
-#define PLON   12u   /* longitude dots per parallel                 */
-#define NPTS   (NMERID * MLAT + NPAR * PLON)   /* 200 + 36 = 236 */
+#define NLAT 9u    /* latitudes -80..80                                  */
+#define NLON 16u   /* longitudes around                                  */
+#define LAT_STEP 20   /* 160 / (NLAT-1) degrees between latitudes        */
+#define NPTS (NLAT * NLON)   /* 144 */
 
 static u8 g_cx, g_cy;
 static u8 g_rpix[NPTS];   /* xz-plane radius in pixels (0..r)   */
 static u8 g_sy[NPTS];     /* screen y (constant per point)      */
 static u8 g_lon[NPTS];    /* base longitude index (0..255)      */
-static u8 g_mer[NPTS];    /* 1 = meridian point, 0 = parallel   */
+static u8 g_blue[NPTS];   /* 1 = blue dot, 0 = white            */
 
 /* latitude angle (deg, -90..90) -> 0..255 phase index. */
 static u8 lat_idx(s16 deg)
@@ -26,42 +25,25 @@ static u8 lat_idx(s16 deg)
 
 void globe_init(u8 cx, u8 cy, u8 r)
 {
-    u8  m, k, p, j;
-    u8  i = 0u;
-    static const s16 par_lat[NPAR] = { -45, 0, 45 };
+    u8 li, lo;
+    u8 i = 0u;
 
     g_cx = cx;
     g_cy = cy;
 
-    /* meridian arcs: NMERID longitudes, each a dense -80..80 latitude line */
-    for (m = 0; m < NMERID; m++) {
-        u8 lon = (u8)(m * (256u / NMERID));
-        for (k = 0; k < MLAT; k++) {
-            s16 deg    = (s16)(-80 + (160 * (s16)k) / (s16)(MLAT - 1u));
-            u8  a      = lat_idx(deg);
-            s8  sinphi = fx_sin[a];
-            s8  cosphi = fx_sin[(u8)(a + 64u)];
-            g_rpix[i] = (u8)fx_mul(cosphi, r);
-            g_sy[i]   = (u8)((s16)cy - fx_mul(sinphi, r));
-            g_lon[i]  = lon;
-            g_mer[i]  = 1u;
-            i++;
-        }
-    }
-
-    /* parallel rings: NPAR latitudes, PLON longitude dots each */
-    for (p = 0; p < NPAR; p++) {
-        u8 a      = lat_idx(par_lat[p]);
-        s8 sinphi = fx_sin[a];
-        s8 cosphi = fx_sin[(u8)(a + 64u)];
-        u8 rp     = (u8)fx_mul(cosphi, r);
-        u8 sy     = (u8)((s16)cy - fx_mul(sinphi, r));
-        for (j = 0; j < PLON; j++) {
+    for (li = 0; li < NLAT; li++) {
+        s16 deg    = (s16)(-80 + LAT_STEP * (s16)li);
+        u8  a      = lat_idx(deg);
+        s8  sinphi = fx_sin[a];
+        s8  cosphi = fx_sin[(u8)(a + 64u)];
+        u8  rp     = (u8)fx_mul(cosphi, r);
+        u8  sy     = (u8)((s16)cy - fx_mul(sinphi, r));
+        for (lo = 0; lo < NLON; lo++, i++) {
             g_rpix[i] = rp;
             g_sy[i]   = sy;
-            g_lon[i]  = (u8)(j * (256u / PLON));
-            g_mer[i]  = 0u;
-            i++;
+            g_lon[i]  = (u8)(lo * (256u / NLON));
+            /* two opposite meridians (longitudes 0 and 180 deg) are blue */
+            g_blue[i] = (lo == 0u || lo == (NLON / 2u)) ? 1u : 0u;
         }
     }
 }
@@ -83,4 +65,4 @@ u8 globe_front(u8 i, u8 theta)
     return (fx_sin[a] >= 0) ? 1u : 0u;
 }
 
-u8 globe_is_meridian(u8 i) { return g_mer[i]; }
+u8 globe_is_blue(u8 i) { return g_blue[i]; }

@@ -42,14 +42,15 @@ int main(void)
         check("front ~half the turn", fc > 80u && fc < 176u);
     }
 
-    /* Both meridian and parallel points exist. */
+    /* Both blue and white dots exist, and blue are a minority (sparse). */
     {
-        int merid = 0, par = 0;
+        int blue = 0, white = 0;
         for (i = 0; i < n; i++) {
-            if (globe_is_meridian(i)) merid++; else par++;
+            if (globe_is_blue(i)) blue++; else white++;
         }
-        check("has meridian points", merid > 0);
-        check("has parallel points", par > 0);
+        check("has blue dots", blue > 0);
+        check("has white dots", white > 0);
+        check("blue dots are sparse", blue < white);
     }
 
     /* globe_init is reusable with a different size (no out-of-bounds). */

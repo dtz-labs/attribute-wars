@@ -579,54 +579,60 @@ static void title_shine(u8 s)
     }
 }
 
-/* Globe placement for the two title phases (cell-box = bytes for the bitmap
- * clear AND cells for the attr reset). Attract: big & central. Menu: small, top,
- * leaving room for the scheme list below. */
+/* Globe placement for the two title phases. Attract: big & central. Menu: small,
+ * top, leaving room for the scheme list below. */
 #define ATTRACT_CX 128u
-#define ATTRACT_CY  80u
-#define ATTRACT_R   56u
-#define ATTRACT_R0   3u   /* (CY-R)/8 */
-#define ATTRACT_R1  17u   /* (CY+R)/8 */
-#define ATTRACT_C0   9u   /* (CX-R)/8 */
-#define ATTRACT_C1  23u   /* (CX+R)/8 */
-
+#define ATTRACT_CY  88u
+#define ATTRACT_R   60u
 #define MENU_CX 128u
 #define MENU_CY  40u
 #define MENU_R   28u
-#define MENU_R0   1u
-#define MENU_R1   8u
-#define MENU_C0  12u
-#define MENU_C1  19u
 
-/* Draw the rotating globe into the back buffer: clear its bitmap box, reset its
- * attr region (white ink / black paper), then plot front points -- a meridian
- * point colours its cell blue, parallels stay white. Box = cell rows r0..r1,
- * byte cols c0..c1. Only the back attribute block is touched (it flips in). */
-static void globe_draw(u8 r0, u8 r1, u8 c0, u8 c1, u8 theta)
+/* Incremental dot trails: the dots (and blue cells) drawn into each buffer last
+ * time. We clear only those -- fast + smooth -- so the rest of the screen stays
+ * black. Indexed by buffer page (0/1, since each buffer is 2 frames stale). */
+static u8 gv_n[2];
+static u8 gv_x[2][GLOBE_MAXPTS];
+static u8 gv_y[2][GLOBE_MAXPTS];
+static u8 gv_b[2][GLOBE_MAXPTS];
+
+static void globe_reset_trails(void) { gv_n[0] = 0u; gv_n[1] = 0u; }
+
+/* Erase last frame's dots in the back buffer, then plot this frame's front dots
+ * (blue dots colour their 8x8 cell blue, white dots leave it white). Uses the
+ * precomputed row table for speed and touches only drawn dots, so the rest of
+ * the screen stays pure black. */
+static void globe_draw(u8 theta)
 {
-    u16 back = scld_back();
-    u8 *attr = (u8 *)(scld_back_page() ? SCLD_ATTRS_B : SCLD_ATTRS_A);
-    u8  r, c, sub, i, n;
+    u16 base = scld_back();
+    u8  page = scld_back_page();
+    u8 *attr = (u8 *)(page ? SCLD_ATTRS_B : SCLD_ATTRS_A);
+    u8  i, n, cnt;
 
-    for (r = r0; r <= r1; r++) {
-        for (sub = 0; sub < 8u; sub++) {
-            u8 *row = scld_scanline(back, (u8)(r * 8u + sub));
-            for (c = c0; c <= c1; c++) row[c] = 0u;
+    for (i = 0; i < gv_n[page]; i++) {
+        u8 x = gv_x[page][i], y = gv_y[page][i];
+        ((u8 *)(base + scld_row_off[y]))[x >> 3] &= (u8)~(0x80u >> (x & 7u));
+        if (gv_b[page][i]) {
+            attr[(u16)(y >> 3) * 32u + (x >> 3)] = ATTR(0, 0, 7);   /* un-blue */
         }
-        for (c = c0; c <= c1; c++) attr[(u16)r * 32u + c] = ATTR(0, 0, 7);
     }
 
-    n = globe_count();
-    for (i = 0; i < n; i++) {
+    n   = 0u;
+    cnt = globe_count();
+    for (i = 0; i < cnt; i++) {
         if (globe_front(i, theta)) {
             u8 x = globe_x(i, theta);
             u8 y = globe_y(i);
-            scld_scanline(back, y)[x >> 3] |= (u8)(0x80u >> (x & 7u));
-            if (globe_is_meridian(i)) {
-                attr[(u16)(y >> 3) * 32u + (x >> 3)] = ATTR(0, 1, 7);   /* blue ink */
+            u8 b = globe_is_blue(i);
+            ((u8 *)(base + scld_row_off[y]))[x >> 3] |= (u8)(0x80u >> (x & 7u));
+            if (b) {
+                attr[(u16)(y >> 3) * 32u + (x >> 3)] = ATTR(0, 1, 7);  /* blue dot */
             }
+            gv_x[page][n] = x; gv_y[page][n] = y; gv_b[page][n] = b;
+            n++;
         }
     }
+    gv_n[page] = n;
 }
 
 /* Title in two double-buffered phases: an ATTRACT screen with a big spinning
@@ -649,12 +655,13 @@ static u8 title_screen(void)
     put_text_both( 9,  1, "ATTRIBUTE WARS");
     put_text_both( 9, 22, "PRESS ANY KEY");
     globe_init(ATTRACT_CX, ATTRACT_CY, ATTRACT_R);
+    globe_reset_trails();
     title_attr_row(1, ATTR(1, 0, 5));
 
     for (;;) {
         title_shine(s);
         title_attr_row(22, ((t >> 4) & 1u) ? ATTR(1, 0, 7) : ATTR(0, 0, 0));  /* flash */
-        globe_draw(ATTRACT_R0, ATTRACT_R1, ATTRACT_C0, ATTRACT_C1, theta);
+        globe_draw(theta);
         scld_present();
         theta = (u8)(theta + 2u);
         t++;
@@ -679,10 +686,11 @@ static u8 title_screen(void)
     put_text_both( 1, 20, "human in the loop: @mpasternak");
     put_text_both( 8, 21, "music: @paatorr");
     globe_init(MENU_CX, MENU_CY, MENU_R);
+    globe_reset_trails();
 
     /* wait for the attract key to be released so it doesn't fall through */
     while (in_inkey() != 0) {
-        globe_draw(MENU_R0, MENU_R1, MENU_C0, MENU_C1, theta);
+        globe_draw(theta);
         scld_present();
         theta = (u8)(theta + 2u);
     }
@@ -692,7 +700,7 @@ static u8 title_screen(void)
         title_attr_row(12, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
         title_attr_row(14, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
         title_attr_row(16, ATTR(1, 0, 4));
-        globe_draw(MENU_R0, MENU_R1, MENU_C0, MENU_C1, theta);
+        globe_draw(theta);
         scld_present();
         theta = (u8)(theta + 2u);
 
