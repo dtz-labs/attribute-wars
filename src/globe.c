@@ -7,15 +7,15 @@
 #include "globe.h"
 #include "fxtab.h"
 
-#define NMER 8u     /* meridian lines (longitudes)                    */
-#define MARC 7u     /* dots per meridian                              */
+#define NMER 9u     /* meridian lines (longitudes)                    */
+#define MARC 9u     /* dots per meridian (dense enough to read motion)*/
 #define MARC_LO  (-72)  /* meridian latitude range -72..72            */
-#define MARC_STEP 24    /* 144 / (MARC-1) deg between meridian dots    */
-#define NPAR 5u     /* parallel rings (latitudes)                     */
-#define PARC 10u    /* dots per parallel                              */
+#define MARC_STEP 18    /* 144 / (MARC-1) deg between meridian dots    */
+#define NPAR 6u     /* parallel rings (latitudes)                     */
+#define PARC 12u    /* dots per parallel                              */
 #define PAR_LO  (-60)   /* parallel latitudes -60..60 (skip the poles)*/
-#define PAR_STEP 30     /* 120 / (NPAR-1) deg between parallels        */
-#define NPTS (NMER * MARC + NPAR * PARC)   /* 56 + 50 = 106 */
+#define PAR_STEP 24     /* 120 / (NPAR-1) deg between parallels        */
+#define NPTS (NMER * MARC + NPAR * PARC)   /* 81 + 72 = 153 */
 
 static u8 g_cx, g_cy;
 static u8 g_rpix[NPTS];   /* xz-plane radius in pixels (0..r)   */
