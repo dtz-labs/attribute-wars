@@ -60,7 +60,7 @@ static const sfx_params_t sfx_table[SFX_N] = {
 void sfx_play(u8 id)
 {
     if (id >= SFX_N) return;
-    if (music_is_on()) {        /* AY present: play on channel C (no beeper stall) */
+    if (music_is_on()) {        /* AY mode: play on channel C (no beeper stall) */
         music_sfx(id);
         return;
     }
@@ -75,7 +75,7 @@ void sfx_play(u8 id)
 void sfx_noise(void)
 {
     u8 j;
-    if (music_is_on()) {        /* AY present: noise crackle on channel C */
+    if (music_is_on()) {        /* AY mode: noise crackle on channel C */
         music_sfx_noise();
         return;
     }

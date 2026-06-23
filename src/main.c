@@ -15,7 +15,7 @@
  *                  wave clear g.wave++ advances the difficulty index
  *   - game over:   lives==0 -> a GAME OVER screen with final score + wave;
  *                  FIRE/SPACE resumes from the death wave, Q starts a fresh game
- *   - sound:       1-bit beeper SFX on shoot/explode/hit/death/extra-life/bonus
+ *   - sound:       title-selected beeper, AY music+FX, or AY FX-only
  *   - HUD:         lives + shields (top), timer + boost bars (bottom), and the
  *                  SCORE rendered as big attribute-cell digits behind the action
  *   - rendering:   incremental erase+redraw into the hidden buffer, page-flip
@@ -39,7 +39,7 @@
 #include "rng.h"
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
-#include "music.h"         /* AY chiptune (auto-detected; no-op without an AY)   */
+#include "music.h"         /* title-selected beeper / AY music+FX / AY FX       */
 #include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
@@ -292,10 +292,9 @@ static void death_anim(u8 px, u8 py)
     }
 }
 
-/* ---- spawn telegraph: gently pulse the cells where the next wave appears ----
- * For ~TELEGRAPH_FRAMES the enemies are inert and invisible; their spawn cells
- * blink, then they pop in. Gives the player a moment + a warning. */
-#define TELEGRAPH_FRAMES 80u
+/* ---- spawn telegraph: one quick warning blink where the next wave appears ----
+ * Enemies are inert/invisible for this short warning, then pop in. */
+#define TELEGRAPH_FRAMES 16u
 
 static void telegraph_blink(const enemies_t *es, u8 tk)
 {
@@ -432,6 +431,7 @@ static void hud_dash_dot(u8 dash_cd)
  * player died on, and waits for a choice:
  *   FIRE / SPACE -> resume from the death wave  (returns 0)
  *   Q            -> fresh game from wave 1       (returns 1)
+ *   ENTER        -> return to the title menu     (returns 2)
  * Drawn into BOTH bitmaps + both attribute blocks, so it reads regardless of
  * which page the last page-flip left visible (we don't flip while waiting).
  * Caller does the game_state reset + re-init.
@@ -453,6 +453,7 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
     put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
     put_u8(27, 17, death_wave);
     put_text_both( 3, 19, "Q           NEW GAME");
+    put_text_both( 3, 21, "ENTER       MAIN MENU");
 
     for (;;) {
         intent_t in;
@@ -465,6 +466,9 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
         }
         if (in_key_pressed(IN_KEY_SCANCODE_q)) {
             return 1u;                 /* fresh game */
+        }
+        if (in_key_pressed(IN_KEY_SCANCODE_ENTER)) {
+            return 2u;                 /* title menu */
         }
         scld_wait();                   /* music continues from the IM2 ISR */
     }
@@ -480,107 +484,116 @@ static void title_attr_row(u8 row, u8 v)
     }
 }
 
-/* ---- title shine-sweep: diagonal glint across "ATTRIBUTE WARS" ----
- *
- * The title text occupies row 3, cols 9..22 (14 characters: "ATTRIBUTE WARS").
- * The sweep diagonal value for cell (col, row) is (col + row).  With a single
- * title row (row=3) the range is (9+3)=12 .. (22+3)=25.
- *
- * sweep position `s` advances each frame over that range, then pauses for
- * SHINE_PAUSE frames before wrapping back to the start.
- *
- * For each title cell the brightness relative to `s` is:
- *   d = (col + 3) - s
- *   d == 0  -> BRIGHT WHITE ink (on the sweep line)
- *   d == 1  -> mid shade (cyan, bright) — the trailing cell
- *   else    -> base colour (bright cyan)
+/* ---- title shine-sweep ----------------------------------------------------
+ * A one-cell glint walks across each title/menu/credit text row in sequence,
+ * then pauses briefly before restarting at "ATTRIBUTE WARS". Attribute writes
+ * are title-screen-only, so clarity beats micro-optimising the small row table.
  */
-#define SHINE_COL_START  9u   /* first col of "ATTRIBUTE WARS"                 */
-#define SHINE_COL_END   22u   /* last  col of "ATTRIBUTE WARS" (14 chars)      */
-#define SHINE_ROW        3u   /* the title character row                        */
-/* diagonal range: (col+row) for col in [9..22], row=3 → [12..25] */
-#define SHINE_S_MIN     12u   /* (SHINE_COL_START + SHINE_ROW)                 */
-#define SHINE_S_MAX     25u   /* (SHINE_COL_END   + SHINE_ROW)                 */
-#define SHINE_PAUSE     60u   /* frames to hold before restarting the sweep    */
+#define SHINE_ROWS   14u
+#define SHINE_PAUSE  40u
 
-/* Paint the title row attribute cells for the current sweep position. */
-static void title_shine(u8 s)
+static const u8 shine_row[SHINE_ROWS] = {
+     3u,  4u,  7u,  8u,  9u, 10u, 12u, 13u, 14u, 15u, 18u, 20u, 22u, 23u
+};
+static const u8 shine_col0[SHINE_ROWS] = {
+     9u,  5u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  5u,  0u,  8u
+};
+static const u8 shine_col1[SHINE_ROWS] = {
+    22u, 26u,  9u, 27u, 27u, 25u,  6u,  9u, 11u,  5u, 13u, 25u, 31u, 22u
+};
+
+static void title_base_attrs(u8 sel, u8 snd)
 {
-    u8 col;
-    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)SHINE_ROW * 32u;
-    for (col = SHINE_COL_START; col <= SHINE_COL_END; col++) {
-        u8 diag = (u8)(col + SHINE_ROW);   /* == col + 3 */
-        u8 attr;
-        if (diag == s) {
-            attr = ATTR(1, 0, 7);          /* BRIGHT WHITE ink — on the glint  */
-        } else if (diag == (u8)(s + 1u)) {
-            attr = ATTR(1, 0, 6);          /* BRIGHT YELLOW — trailing cell     */
-        } else {
-            attr = ATTR(1, 0, 5);          /* bright cyan — base title colour   */
-        }
-        a[col] = attr;
+    title_attr_row( 3, ATTR(1, 0, 5));      /* title: bright cyan */
+    title_attr_row( 4, ATTR(1, 0, 5));      /* version */
+    title_attr_row( 7, ATTR(1, 0, 5));      /* CONTROLS heading */
+    title_attr_row( 8, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row( 9, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(10, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(12, ATTR(1, 0, 5));      /* SOUND heading */
+    title_attr_row(13, (snd == SOUND_BEEPER)       ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(14, (snd == SOUND_MUSIC_FX)     ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(15, (snd == SOUND_FX)           ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
+    title_attr_row(18, ATTR(1, 0, 4));      /* START */
+    title_attr_row(20, ATTR(0, 0, 7));
+    title_attr_row(22, ATTR(0, 0, 7));
+    title_attr_row(23, ATTR(0, 0, 7));
+}
+
+static void title_shine(u8 row_idx, u8 col)
+{
+    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)shine_row[row_idx] * 32u;
+    if (col >= shine_col0[row_idx] && col <= shine_col1[row_idx]) {
+        a[col] = ATTR(1, 0, 7);            /* bright white glint */
+    }
+    if (col > shine_col0[row_idx]) {
+        a[(u8)(col - 1u)] = ATTR(1, 0, 6); /* yellow trail */
     }
 }
 
-/* Draw the menu, poll keys 1/2/3 (pick a control scheme) and 0 (start).
- * Returns the chosen CTRL_* scheme. */
-static u8 title_screen(void)
+/* Draw the menu, poll keys 1/2/3 (controls), 4/5/6 (sound), and 0 (start). */
+static void title_screen(u8 *ctrl_out, u8 *sound_out)
 {
     u8 sel = CTRL_KEMPSTON_MOVE;
-    /* Sweep state: s is the current diagonal position; pause counts down between
-     * passes. Start s at SHINE_S_MIN so the glint enters from the left edge. */
-    u8 s     = SHINE_S_MIN;
+    u8 snd = music_default_sound();
+    u8 shine_i = 0u;
+    u8 shine_c = shine_col0[0];
     u8 pause = 0u;
 
+    scld_show_a();
     scld_clear(SCLD_SCREEN_A);
     memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
 
     put_text(SCLD_SCREEN_A,  9,  3, "ATTRIBUTE WARS");
+    put_text(SCLD_SCREEN_A,  5,  4, "version 1.0 (20260623)");
+    put_text(SCLD_SCREEN_A,  2,  7, "CONTROLS");
     put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
-    put_text(SCLD_SCREEN_A,  2, 10, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text(SCLD_SCREEN_A,  2, 12, "3 TWO JOYSTICKS (TS2068)");
-    put_text(SCLD_SCREEN_A,  2, 15, "0 START GAME");
-    /* Music credit + memorial. The AY tune "Spectrumizer" is by Pator, who has
-     * sadly passed away -- R.I.P. (Plays only on AY machines; the credit shows
-     * on every machine.) */
-    put_text(SCLD_SCREEN_A,  5, 18, "MUSIC: PATOR  -  R.I.P.");
-    put_text(SCLD_SCREEN_A,  3, 22, "(C) 2026 ANTHROPIC, INC.");
-    put_text(SCLD_SCREEN_A,  3, 23, "(C) 2026 MICHAL PASTERNAK");
+    put_text(SCLD_SCREEN_A,  2,  9, "2 KEYS MOVE  KEMPSTON FIRE");
+    put_text(SCLD_SCREEN_A,  2, 10, "3 TWO JOYSTICKS (TS2068)");
+    put_text(SCLD_SCREEN_A,  2, 12, "SOUND");
+    put_text(SCLD_SCREEN_A,  2, 13, "4 BEEPER");
+    put_text(SCLD_SCREEN_A,  2, 14, "5 MUSIC+FX");
+    put_text(SCLD_SCREEN_A,  2, 15, "6 FX");
+    put_text(SCLD_SCREEN_A,  2, 18, "0 START GAME");
+    put_text(SCLD_SCREEN_A,  5, 20, "\x7F 2026 Claude & Codex");
+    put_text(SCLD_SCREEN_A,  0, 22, "human in the loop: @mpasternak79");
+    put_text(SCLD_SCREEN_A,  8, 23, "music: @paatorr");
 
-    title_attr_row(3, ATTR(1, 0, 5));      /* bright-cyan title (base colour) */
+    title_base_attrs(sel, snd);
 
     for (;;) {
-        /* highlight the selected scheme bright yellow; START is bright green */
-        title_attr_row( 8, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(10, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(12, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-        title_attr_row(15, ATTR(1, 0, 4));
+        title_base_attrs(sel, snd);
+        title_shine(shine_i, shine_c);
 
-        /* ---- shine sweep: paint title-letter row (row 3) only --------------- */
-        title_shine(s);
-
-        /* Advance (or pause) the sweep position */
         if (pause > 0u) {
             pause--;
             if (pause == 0u) {
-                s = SHINE_S_MIN;           /* restart the sweep */
+                shine_i = 0u;
+                shine_c = shine_col0[0];
             }
         } else {
-            if (s < SHINE_S_MAX) {
-                s++;
+            if (shine_c < shine_col1[shine_i]) {
+                shine_c++;
+            } else if (shine_i < (SHINE_ROWS - 1u)) {
+                shine_i++;
+                shine_c = shine_col0[shine_i];
             } else {
-                pause = SHINE_PAUSE;       /* glint exited right — begin pause  */
+                pause = SHINE_PAUSE;
             }
         }
 
         if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
         else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
         else if (in_key_pressed(IN_KEY_SCANCODE_3)) sel = CTRL_DUAL_STICK;
+        else if (in_key_pressed(IN_KEY_SCANCODE_4)) snd = SOUND_BEEPER;
+        else if (in_key_pressed(IN_KEY_SCANCODE_5)) snd = SOUND_MUSIC_FX;
+        else if (in_key_pressed(IN_KEY_SCANCODE_6)) snd = SOUND_FX;
         else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
 
-        scld_wait();                   /* menu tune ticks from the IM2 ISR */
+        scld_wait();                   /* no AY/IM2 setup until START */
     }
-    return sel;
+    *ctrl_out = sel;
+    *sound_out = snd;
 }
 
 int main(void)
@@ -617,9 +630,6 @@ int main(void)
     scld_init(0x07u);                 /* clears both buffers, IM1+EI, shows A   */
     z80_outp(0xFEu, 0x00u);           /* black ULA border (title + arena)       */
     rng_seed(0xACE1u);
-    music_init();                     /* probe AY; load+start the tune (silent  */
-                                      /* no-op on a beeper-only machine)        */
-
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(ps_ship_dir[d], spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
     spr_preshift(ps_enemy_vbounce, spr_enemy_vbounce);
@@ -628,8 +638,16 @@ int main(void)
     spr_preshift(ps_enemy_hunter,  spr_enemy_hunter);
     hud_init();                                  /* build the HUD heart sprite */
 
-    /* Title + control-scheme menu; the choice drives input_read() all game. */
-    input_set_scheme(title_screen());
+main_menu:
+    /* Title menus. SOUND is applied only after START, so the title screen never
+     * enables IM2 or writes AY audio ports on a TC2048 default path. */
+    {
+        u8 ctrl_choice;
+        u8 sound_choice;
+        title_screen(&ctrl_choice, &sound_choice);
+        input_set_scheme(ctrl_choice);
+        music_init(sound_choice);
+    }
 
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
@@ -643,8 +661,16 @@ int main(void)
     wave_total = wave_time_frames(g.wave);   /* full bar; clock starts after the
                                               * telegraph (when enemies go live) */
     wave_timer = wave_total;
+    wave_secs  = 0xFFFFu;
+    cooldown = 0u;
+    tick = 0u;
+    invuln = 0u;
+    spawn_timer = TELEGRAPH_FRAMES;
+    recoil_timer = 0u;
+    recoil_dx = 0;
+    recoil_dy = 0;
     hud_invalidate();                 /* force first widget paint               */
-                    g_dash_dot = 0xFFu;
+    g_dash_dot = 0xFFu;
     hud_draw_lives(g.lives);
     hud_draw_shields(g.shields);
     prevn[0] = 0;
@@ -688,7 +714,7 @@ int main(void)
         if (spawn_timer > 0u) {
             /* ---- spawn telegraph: enemies inert+invisible; cells pulse ---- */
             spawn_timer--;
-            telegraph_blink(&enemies, tick);
+            telegraph_blink(&enemies, spawn_timer);
             if (spawn_timer == 0u) {
                 telegraph_clear(&enemies);      /* restore before they appear */
             }
@@ -782,12 +808,16 @@ int main(void)
                     }
                     if (g.lives == 0u) {
                         /* ---- GAME OVER (spec §7): show score + wave, then offer
-                         * FIRE/SPACE resume-from-death-wave or Q fresh game. ---- */
+                         * FIRE/SPACE resume, Q fresh game, ENTER title menu. ---- */
                         u8 death_wave = g.wave;
-                        if (game_over_screen(&g, death_wave) == 0u) {
+                        u8 over = game_over_screen(&g, death_wave);
+                        if (over == 0u) {
                             game_resume_from_wave(&g, death_wave);  /* score 0, keep wave */
-                        } else {
+                        } else if (over == 1u) {
                             game_new(&g);                            /* wave 1     */
+                        } else {
+                            music_init(SOUND_BEEPER);                 /* quiet title reset */
+                            goto main_menu;
                         }
                     } else {
                         g.shields = START_SHIELDS;    /* new life, full shields    */

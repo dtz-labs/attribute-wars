@@ -149,6 +149,10 @@ extern uint8_t  scld_back_page(void);
 extern uint16_t scld_shown(void);
 extern uint16_t scld_shown_attrs(void);
 
+/* Force screen A visible. Used by static single-page screens such as the title
+ * menu, which draw only into screen A. */
+extern void     scld_show_a(void);
+
 /* Wait for the next 50 Hz frame interrupt (HALT), then page-flip so the buffer
  * you just drew becomes visible. One call per frame, after drawing. */
 extern void     scld_present(void);

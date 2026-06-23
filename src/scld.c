@@ -85,6 +85,12 @@ uint16_t scld_shown_attrs(void)
     return scld_front ? SCLD_ATTRS_B : SCLD_ATTRS_A;
 }
 
+void scld_show_a(void)
+{
+    scld_front = 0;
+    z80_outp(SCLD_PORT, SCLD_PAGE_A);
+}
+
 void scld_present(void)
 {
     intrinsic_halt();                   /* sync to the 50 Hz frame interrupt   */

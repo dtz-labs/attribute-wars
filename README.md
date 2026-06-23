@@ -11,8 +11,8 @@ tradeoff favours frame-rate over colour and visual complexity. The game runs at 
 locked 50 Hz using the Timex SCLD hardware page-flip for flicker-free double buffering.
 
 > **Status:** in development. Targets the Timex TC2048 today; **AY-3-8910 music now
-> plays on any AY-equipped machine** (ZX 128 / TS2068 / TC2068), auto-detected at
-> runtime — see [Music](#music). The full TC2068/TS2068 and ZX Spectrum 128K
+> plays on AY-equipped machines** (ZX 128 / TS2068 / TC2068) through the title
+> SOUND menu — see [Music](#music). The full TC2068/TS2068 and ZX Spectrum 128K
 > *ports* (kernel swaps) are designed in
 > [`docs/superpowers/specs/`](docs/superpowers/specs/).
 
@@ -79,27 +79,28 @@ them).
 
 ## Music
 
-On any machine with an AY-3-8910/8912 — ZX Spectrum 128/+2/+3, Timex TS2068/TC2068,
-or a 48K with an AY interface — the game plays **AY chiptune music**, auto-detected at
-runtime. The beeper-only TC2048 stays silent (with its beeper SFX as always); no
-machine is left worse off.
+The title screen has a **SOUND** menu: `BEEPER`, `MUSIC+FX`, or `FX`. The default
+is conservative: TC2068/TS2068 and ZX Spectrum 128K-style AY machines start on
+`MUSIC+FX`, while a TC2048 starts on `BEEPER`. The player can override this, so a
+TC2048 fitted with a standard AY interface can use `MUSIC+FX` or `FX`.
 
 The tune is **"Spectrumizer" by Pator** ([ZX-Art](https://zxart.ee/eng/authors/p/pator/spectrumizer/),
-Lost Party 2023). Pator has sadly passed away — **R.I.P., and thank you for the music.**
+Lost Party 2023). Pator is alive as [@paatorr](https://x.com/paatorr) — thank you
+for the music.
 
 Playback uses Sergey Bulba's Vortex Tracker II PT3 player (vendored from z88dk),
-ticked once per frame from the main loop; the beeper SFX (`sfx.asm`) are untouched
-and mix over the music in hardware.
+ticked from a 50 Hz IM2 interrupt after the title choice. Beeper SFX remain the
+fallback for `BEEPER`; AY modes route SFX to AY channel C.
 
-**How the chip is found** (`src/music_ay.asm`) — designed to never disturb a
-TC2048: first probe the *standard* AY at `0xFFFD`/`0xBFFD`. Those are **odd** ports,
-so they can never be confused with the ULA — this safely covers the ZX 128K and any
-TC2048/48K fitted with a standard AY interface. If none answers, identify the
-machine by **ROM signature**: a TS2068/TC2068 has the string `"Timex"` at ROM
-`0x113D` (its 1983 copyright line), a TC2048 does not — and *only* on a confirmed
-2068 do we enable the native AY at `0xF5`/`0xF6`. (`0xF6` is an **even** port = the
-ULA on a TC2048, so it is touched only once the ROM proves we are on a 2068;
-blindly probing it scrambles the border + beeper.)
+**How the default is chosen** (`src/music_ay.asm`) — designed to never disturb a
+TC2048: first identify a TS2068/TC2068 by **ROM signature** (`"Timex"` at ROM
+`0x113D`) and default it to native Timex AY at `0xF5`/`0xF6`. If that signature is
+absent, check whether the Timex SCLD is present; a Timex that is not a 2068 is a
+TC2048, so the default is `BEEPER`. Only non-Timex machines probe the standard AY
+at `0xFFFD`/`0xBFFD`. Those are **odd** ports, so they can never be confused with
+the ULA. (`0xF6` is an **even** port = the ULA on a TC2048, so it is touched only
+once the ROM proves we are on a 2068; blindly probing it scrambles the border +
+beeper.)
 
 > **2068 note:** AY music on a TS2068/TC2068 is detected via the **native Timex HOME
 > ROM**. If you run the game through a *Spectrum-emulator cartridge* (which swaps in

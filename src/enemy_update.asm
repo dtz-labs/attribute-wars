@@ -31,7 +31,7 @@ ARENA_T   equ 8
 ARENA_B   equ 176
 LVL_CHASE equ 2
 LVL_HUNT  equ 3
-DODGE     equ 24
+DODGE     equ 32
 
 _enemies_update_asm:
         push    ix

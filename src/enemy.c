@@ -11,7 +11,8 @@
 #include "arena.h"
 #include "rng.h"
 
-#define DODGE_DIST 24u   /* hunter flees a bullet this close (per axis) */
+#define DODGE_DIST 32u          /* hunter flees a bullet this close (per axis) */
+#define MAX_AXIS_BOUNCERS 2u    /* cap vertical/horizontal bouncers per wave */
 
 #if ENEMY_SPEED != 1
 #error "enemies_update uses a 1 px/frame u8 fast path; revisit it for ENEMY_SPEED != 1"
@@ -132,6 +133,7 @@ void enemies_spawn(enemies_t *es, u8 wave)
     const wave_t *w;
     u8 pat;
     u8 count, nb, nc, nh;
+    u8 axis_bouncers;
     u8 i;
     enemy_t *e;
     const u8 *px, *py;
@@ -189,6 +191,7 @@ void enemies_spawn(enemies_t *es, u8 wave)
     }
 
     e = es->e;
+    axis_bouncers = 0u;
     for (i = 0u; i < MAX_ENEMIES; i++, e++) {
         if (i < count) {
             e->x = px[i];
@@ -203,11 +206,13 @@ void enemies_spawn(enemies_t *es, u8 wave)
                 u8 var = (u8)(rng_byte() % 3u);
                 s8 sx  = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
                 s8 sy  = (rng_byte() & 1u) ? (s8)1 : (s8)-1;
-                if (var == 1u) {                 /* vertical-only  */
+                if (var == 1u && axis_bouncers < MAX_AXIS_BOUNCERS) {
+                    axis_bouncers++;
                     e->level = ENEMY_BOUNCE_V; e->dx = (s8)0; e->dy = sy;
-                } else if (var == 2u) {          /* horizontal-only*/
+                } else if (var == 2u && axis_bouncers < MAX_AXIS_BOUNCERS) {
+                    axis_bouncers++;
                     e->level = ENEMY_BOUNCE_H; e->dx = sx; e->dy = (s8)0;
-                } else {                         /* diagonal ball  */
+                } else {
                     e->level = ENEMY_BOUNCE;   e->dx = sx; e->dy = sy;
                 }
             } else if (i < (u8)(nb + nc)) {

@@ -125,6 +125,7 @@ PUBLIC asm_VT_PLAY
 PUBLIC asm_VT_MUTE
 PUBLIC asm_VT_INIT
 PUBLIC asm_VT_AYREGS
+PUBLIC asm_VT_SETUP
 EXTERN asm_vt_hardware_out
 EXTERN asm_vt_hardware_out_A0
 asm_VT_START:
@@ -1206,6 +1207,7 @@ VARS:
 ;vars in code and other self-modified code moved here
 ;(for ROM and RAM separation)
 SETUP:
+asm_VT_SETUP:
 	DEFB 0 ;set bit0 to 1, if you want to play without looping
 	     ;bit7 is set each time, when loop point is passed
 CrPsPtr:

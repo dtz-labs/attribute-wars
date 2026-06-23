@@ -180,6 +180,27 @@ static void test_all_waves_in_bounds(void)
     }
 }
 
+/* ---- axis-only bouncers stay rare; the rest bounce diagonally ---- */
+static void test_axis_bouncer_cap(void)
+{
+    enemies_t es;
+    u8 seed, w, i;
+    for (seed = 0u; seed < 32u; seed++) {
+        for (w = 1u; w <= 16u; w++) {
+            u8 axis = 0u;
+            rng_seed((u16)(0x7000u + (u16)seed * 17u + w));
+            enemies_spawn(&es, w);
+            for (i = 0u; i < MAX_ENEMIES; i++) {
+                if (es.e[i].alive &&
+                    (es.e[i].level == ENEMY_BOUNCE_V || es.e[i].level == ENEMY_BOUNCE_H)) {
+                    axis++;
+                }
+            }
+            check("axis-only bouncers capped", axis <= 2u);
+        }
+    }
+}
+
 /* ---- movement tests (unchanged from original) ---- */
 static void test_movement(void)
 {
@@ -216,6 +237,13 @@ static void test_movement(void)
     enemies_update(&es, 100, 100, &bs);     /* player right, but flee left from bullet */
     check("hunter flees the bullet (moves left)", es.e[0].x == 49);
 
+    /* Wider dodge: a hunter should already react before the bullet is on top
+     * of it, making the dodge visibly more effective without extra AI state. */
+    es.e[0].x = 50; es.e[0].y = 50;
+    bs.b[0].x = 80; bs.b[0].y = 50;
+    enemies_update(&es, 100, 100, &bs);
+    check("hunter flees bullet within wider range", es.e[0].x == 49);
+
     /* HUNTER with no bullet near -> behaves like a chaser. */
     clear_bullets(&bs);
     es.e[0].x = 50; es.e[0].y = 50;
@@ -247,6 +275,7 @@ int main(void)
     test_wave_loop();
     test_wave0_guard();
     test_all_waves_in_bounds();
+    test_axis_bouncer_cap();
     test_movement();
 
     if (failures == 0) { printf("test_enemy: ALL PASS\n"); return 0; }

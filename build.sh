@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 mkdir -p build
 
-zcc +zx -SO3 -clib=sdcc_iy -iquote"$ROOT/include" \
+zcc +zx -SO3 -clib=sdcc_iy -startup=31 -iquote"$ROOT/include" \
     src/main.c src/scld.c src/sprite.c src/sprites.c src/player.c \
     src/bullet.c src/enemy.c src/collision.c src/geometry.c src/input.c \
     src/rng.c src/score.c src/sfx.c src/hud.c src/music.c \

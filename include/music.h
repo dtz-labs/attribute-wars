@@ -5,17 +5,25 @@
  *
  * Plays Pator's "Spectrumizer.pt3" via z88dk's VortexTracker2 player, on any
  * machine with an AY (ZX 128/+2/+3, TS2068/TC2068, or a 48K + AY interface),
- * auto-detected at runtime. On a beeper-only machine (e.g. the TC2048)
- * music_init() returns 0 and every other entry is a cheap no-op.
+ * selected from the title-screen SOUND menu. On a beeper-only choice/machine,
+ * music_init() returns 0 and every other AY entry is a cheap no-op.
  */
 #ifndef MUSIC_H
 #define MUSIC_H
 
 #include "types.h"
 
-/* Probe for an AY, latch its port pair, load + start the tune. Returns 1 if an
- * AY was found (music will play), 0 otherwise. Call once after scld_init(). */
-u8   music_init(void);
+#define SOUND_BEEPER    0u
+#define SOUND_MUSIC_FX  1u
+#define SOUND_FX        2u
+
+/* Pick the title-screen default without enabling IM2 or starting the player:
+ * TC2068/TS2068 or standard AY -> MUSIC+FX; TC2048 -> BEEPER. */
+u8   music_default_sound(void);
+
+/* Apply the title-screen SOUND choice. Returns 1 if the AY path is enabled
+ * (MUSIC+FX or FX), 0 if the beeper path remains active. */
+u8   music_init(u8 mode);
 
 /* Advance the player one 50 Hz frame. Call once per HALT. No-op without an AY. */
 void music_tick(void);
@@ -29,7 +37,7 @@ void music_stop(void);
  * writes, no busy-loop. The PT3 player keeps channels A+B; channel C is the SFX.
  * On a beeper-only machine these are unused and sfx.c keeps the beeper. */
 
-/* 1 if an AY was detected (i.e. music is playing and AY SFX should be used). */
+/* 1 if the AY SFX path is active (MUSIC+FX or FX), else use the beeper. */
 u8   music_is_on(void);
 
 /* Trigger sound effect `id` (an SFX_* from sfx.h) on AY channel C. */
