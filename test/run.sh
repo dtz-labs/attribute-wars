@@ -50,4 +50,7 @@ $CC $CFLAGS "$ROOT/test/test_fxtab.c" "$ROOT/src/fxtab.c" -o "$OUT/test_fxtab"
 $CC $CFLAGS "$ROOT/test/test_plasma.c" "$ROOT/src/plasma.c" "$ROOT/src/fxtab.c" -o "$OUT/test_plasma"
 "$OUT/test_plasma"
 
+$CC $CFLAGS "$ROOT/test/test_globe.c" "$ROOT/src/globe.c" "$ROOT/src/fxtab.c" -o "$OUT/test_globe"
+"$OUT/test_globe"
+
 echo "ALL HOST TESTS PASSED"
