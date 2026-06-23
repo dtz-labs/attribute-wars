@@ -14,6 +14,7 @@
 #define DODGE_DIST 48u          /* hunter flees a bullet this close (per axis) */
 #define HUNTER_FLEE_SPEED 2     /* fleeing hunters step faster than chasers */
 #define MAX_AXIS_BOUNCERS 2u    /* cap vertical/horizontal bouncers per wave */
+#define CHASER_WOUND_JUMP 24u   /* first hit displacement, enough to dodge */
 
 #if ENEMY_SPEED != 1
 #error "enemies_update uses a 1 px/frame u8 fast path; revisit it for ENEMY_SPEED != 1"
@@ -198,7 +199,6 @@ void enemies_spawn(enemies_t *es, u8 wave)
         if (i < count) {
             e->x = px[i];
             e->y = py[i];
-            e->alive = 1u;
             /* Assign level: first nb bounce, then nc chase, then nh hunter. */
             if (i < nb) {
                 /* Bouncer: a random variant -- ball (diagonal), vertical-only,
@@ -226,6 +226,7 @@ void enemies_spawn(enemies_t *es, u8 wave)
                 e->dx = (s8)0;
                 e->dy = (s8)0;
             }
+            e->alive = (u8)((e->level == ENEMY_CHASE) ? 2u : 1u);
         } else {
             e->x = ARENA_L;
             e->y = ARENA_T;
@@ -247,7 +248,60 @@ static u8 plus8_clamped(u8 v, u8 hi)
     return (v >= (u8)(hi - 8u)) ? hi : (u8)(v + 8u);
 }
 
-static u8 spawn_split_bouncer(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
+static u8 minus_clamped(u8 v, u8 lo, u8 amount)
+{
+    return (v <= (u8)(lo + amount)) ? lo : (u8)(v - amount);
+}
+
+static u8 plus_clamped(u8 v, u8 hi, u8 amount)
+{
+    return (v >= (u8)(hi - amount)) ? hi : (u8)(v + amount);
+}
+
+void enemies_jump_wounded_chasers(enemies_t *es, u8 wound_mask)
+{
+    enemy_t *e = es->e;
+    u8 i;
+    u8 bit = 1u;
+
+    for (i = 0u; i < MAX_ENEMIES; i++, e++) {
+        if ((wound_mask & bit) && e->alive && e->level == ENEMY_CHASE) {
+            switch (rng_byte() & 7u) {
+                case 0u:
+                    e->y = minus_clamped(e->y, ARENA_T, CHASER_WOUND_JUMP);
+                    break;
+                case 1u:
+                    e->x = plus_clamped(e->x, ARENA_R, CHASER_WOUND_JUMP);
+                    e->y = minus_clamped(e->y, ARENA_T, CHASER_WOUND_JUMP);
+                    break;
+                case 2u:
+                    e->x = plus_clamped(e->x, ARENA_R, CHASER_WOUND_JUMP);
+                    break;
+                case 3u:
+                    e->x = plus_clamped(e->x, ARENA_R, CHASER_WOUND_JUMP);
+                    e->y = plus_clamped(e->y, ARENA_B, CHASER_WOUND_JUMP);
+                    break;
+                case 4u:
+                    e->y = plus_clamped(e->y, ARENA_B, CHASER_WOUND_JUMP);
+                    break;
+                case 5u:
+                    e->x = minus_clamped(e->x, ARENA_L, CHASER_WOUND_JUMP);
+                    e->y = plus_clamped(e->y, ARENA_B, CHASER_WOUND_JUMP);
+                    break;
+                case 6u:
+                    e->x = minus_clamped(e->x, ARENA_L, CHASER_WOUND_JUMP);
+                    break;
+                default:
+                    e->x = minus_clamped(e->x, ARENA_L, CHASER_WOUND_JUMP);
+                    e->y = minus_clamped(e->y, ARENA_T, CHASER_WOUND_JUMP);
+                    break;
+            }
+        }
+        bit = (u8)(bit << 1);
+    }
+}
+
+static u8 spawn_hunter_clone(enemies_t *es, u8 x, u8 y)
 {
     enemy_t *e = es->e;
     u8 i;
@@ -255,9 +309,9 @@ static u8 spawn_split_bouncer(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
         if (!e->alive) {
             e->x = x;
             e->y = y;
-            e->dx = dx;
-            e->dy = dy;
-            e->level = ENEMY_BOUNCE;
+            e->dx = (s8)0;
+            e->dy = (s8)0;
+            e->level = ENEMY_HUNTER;
             e->alive = 1u;
             return 1u;
         }
@@ -265,13 +319,13 @@ static u8 spawn_split_bouncer(enemies_t *es, u8 x, u8 y, s8 dx, s8 dy)
     return 0u;
 }
 
-u8 enemies_spawn_chaser_splits(enemies_t *es, u8 x, u8 y)
+u8 enemies_spawn_hunter_clones(enemies_t *es, u8 x, u8 y)
 {
     u8 spawned = 0u;
-    spawned = (u8)(spawned + spawn_split_bouncer(es,
-        minus8_clamped(x, ARENA_L), minus8_clamped(y, ARENA_T), (s8)-1, (s8)-1));
-    spawned = (u8)(spawned + spawn_split_bouncer(es,
-        plus8_clamped(x, ARENA_R), plus8_clamped(y, ARENA_B), (s8)1, (s8)1));
+    spawned = (u8)(spawned + spawn_hunter_clone(es,
+        minus8_clamped(x, ARENA_L), plus8_clamped(y, ARENA_B)));
+    spawned = (u8)(spawned + spawn_hunter_clone(es,
+        plus8_clamped(x, ARENA_R), minus8_clamped(y, ARENA_T)));
     return spawned;
 }
 

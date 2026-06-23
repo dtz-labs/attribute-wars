@@ -36,7 +36,7 @@ DODGE     equ 48
 _enemies_update_asm:
         push    ix
         ld      ix,(_eu_es)     ; ix -> e[0]
-        ld      b,8             ; MAX_ENEMIES
+        ld      b,7             ; MAX_ENEMIES
 eu_loop:
         ld      a,(ix+5)        ; alive?
         or      a

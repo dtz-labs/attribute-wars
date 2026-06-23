@@ -64,7 +64,8 @@
 #endif
 
 /* Visual recoil (spec §3.5): how many frames the ship draws kicked-back. */
-#define RECOIL_FRAMES 2u
+#define RECOIL_FRAMES 3u
+#define RECOIL_PIXELS 2u
 
 /* Largest u8 wave we let the difficulty index climb to. enemies_spawn() loops
  * at the wave-16 settings for anything >16, so this is only an anti-wrap guard
@@ -807,47 +808,64 @@ main_menu:
 
             /* ---- enemies act; bullets destroy them (hit-pop + points per kill) ---- */
             enemies_update(&enemies, player.x, player.y, &bullets);
-            if (bullet_count) {
-                u8 kill_mask = 0u;
-                u8 kills = collide_bullets_enemies_mask(&bullets, &enemies, &kill_mask);
-                if (kills) {
-                    enemy_t *e = enemies.e;
-                    u8 bit = 1u;
-                    u8 scored = 0u;
-                    u8 killed_n = 0u;
-                    u8 killed_level[MAX_BULLETS];
-                    u8 killed_x[MAX_BULLETS];
-                    u8 killed_y[MAX_BULLETS];
-                    bullet_count = (u8)(bullet_count - kills);
-                    enemy_count = (u8)(enemy_count - kills);
-                    for (i = MAX_ENEMIES; i != 0u; i--, e++) {
-                        if (kill_mask & bit) {
-                            u8 level = e->level;
-                            u8 xl = score_add(&g.score, score_enemy_points(level));
-                            g.lives = (u8)(g.lives + xl);  /* extra life(s)  */
-                            if (xl) {
-                                sfx_play(SFX_EXTRA_LIFE);
-                                hud_draw_lives(g.lives);
-                            }
-                            fx_spawn(e->x, e->y);
-                            if (killed_n < MAX_BULLETS) {
-                                killed_level[killed_n] = level;
-                                killed_x[killed_n] = e->x;
-                                killed_y[killed_n] = e->y;
-                                killed_n++;
-                            }
-                            scored = 1u;
-                        }
-                        bit = (u8)(bit << 1);
+            /* A bullet is the ONLY way collide kills an enemy, so on the common
+             * bulletless frame the whole snapshot/collide/rescan is a no-op --
+             * skip it. When bullets are live, collide returns a kill mask so we
+             * score only the killed slots; wounded chasers are displaced but
+             * stay alive and do not score until the second hit. */
+            {
+                if (bullet_count) {
+                    u8 kill_mask = 0u;
+                    u8 wound_mask = 0u;
+                    u8 kills;
+                    kills = collide_bullets_enemies_masks(&bullets, &enemies,
+                                                          &kill_mask, &wound_mask);
+                    bullet_count = bullets_count(&bullets);
+                    if (wound_mask) {
+                        enemies_jump_wounded_chasers(&enemies, wound_mask);
+                        sfx_play(SFX_HIT);
                     }
-                    for (i = 0u; i < killed_n; i++) {
-                        if (killed_level[i] == ENEMY_CHASE) {
-                            enemy_count = (u8)(enemy_count +
-                                enemies_spawn_chaser_splits(&enemies, killed_x[i], killed_y[i]));
+                    if (kills) {
+                        enemy_t *e = enemies.e;
+                        u8 bit = 1u;
+                        u8 scored = 0u;
+                        u8 killed_n = 0u;
+                        u8 killed_level[MAX_BULLETS];
+                        u8 killed_x[MAX_BULLETS];
+                        u8 killed_y[MAX_BULLETS];
+                        enemy_count = (u8)(enemy_count - kills);
+                        for (i = MAX_ENEMIES; i != 0u; i--, e++) {
+                            if (kill_mask & bit) {
+                                u8 level = e->level;
+                                u8 xl = score_add(&g.score, score_enemy_points(level));
+                                g.lives = (u8)(g.lives + xl);  /* extra life(s)  */
+                                if (xl) {
+                                    sfx_play(SFX_EXTRA_LIFE);
+                                    hud_draw_lives(g.lives);
+                                }
+                                fx_spawn(e->x, e->y);
+                                if (killed_n < MAX_BULLETS) {
+                                    killed_level[killed_n] = level;
+                                    killed_x[killed_n] = e->x;
+                                    killed_y[killed_n] = e->y;
+                                    killed_n++;
+                                }
+                                scored = 1u;
+                            }
+                            bit = (u8)(bit << 1);
                         }
-                    }
-                    if (scored) {
-                        hud_score(&g.score, 0u);           /* points landed   */
+                        for (i = 0u; i < killed_n; i++) {
+                            if (killed_level[i] == ENEMY_HUNTER &&
+                                enemy_count <= (u8)(MAX_ENEMIES - 2u) &&
+                                (rng_byte() & 1u)) {
+                                enemy_count = (u8)(enemy_count +
+                                    enemies_spawn_hunter_clones(&enemies,
+                                                               killed_x[i], killed_y[i]));
+                            }
+                        }
+                        if (scored) {
+                            hud_score(&g.score, 0u);           /* points landed   */
+                        }
                     }
                 }
             }
@@ -967,10 +985,14 @@ main_menu:
                     if (recoil_timer) {
                         s8 sx = step_sign(recoil_dx);
                         s8 sy = step_sign(recoil_dy);
-                        /* opposite aim, clamped (x wraps as a u8; y stays 0..184). */
-                        dx = (u8)(player.x - sx);
-                        if (sy > 0 && player.y > 0u)         dy = (u8)(player.y - 1u);
-                        else if (sy < 0 && player.y < 184u)  dy = (u8)(player.y + 1u);
+                        /* opposite aim; y stays 0..184, x has enough arena margin. */
+                        if (sx > 0)       dx = (u8)(player.x - RECOIL_PIXELS);
+                        else if (sx < 0)  dx = (u8)(player.x + RECOIL_PIXELS);
+                        if (sy > 0 && player.y >= RECOIL_PIXELS) {
+                            dy = (u8)(player.y - RECOIL_PIXELS);
+                        } else if (sy < 0 && player.y <= (u8)(184u - RECOIL_PIXELS)) {
+                            dy = (u8)(player.y + RECOIL_PIXELS);
+                        }
                     }
                     SPR_DRAW(back, dx, dy, PS_SHIP_DIR(fdir));
                     out->x = dx; out->y = dy;
@@ -1016,10 +1038,11 @@ main_menu:
         /* Explosion sound SYNCED with the animation: while any hit-pop is on
          * screen, emit a short noisy crackle each frame so the whole burst is
          * audible together with the graphics. Cheap (~2.5k T, only during fx). */
-        if (fx_render()) {            /* animate enemy-hit colour pops (attrs) */
+        if (fx_render()) {              /* animate enemy-hit colour pops (attrs) */
             sfx_noise();
         }
-        scld_present();               /* HALT to 50 Hz, then page-flip */
+
+        scld_present();                 /* HALT to 50 Hz, then page-flip */
         /* music is driven by the 50 Hz IM2 ISR -- no per-frame tick here */
     }
     /* never reached */

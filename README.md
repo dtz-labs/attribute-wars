@@ -2,81 +2,47 @@
 
 ![Attribute Wars loading screen](assets/loading.png)
 
-**Attribute Wars** is a Geometry-Wars-style twin-joystick shooter for the
-Timex/Spectrum family, written in C and hand-written Z80 assembly with
-[z88dk](https://z88dk.org).
+**Attribute Wars version 1.0** is available from:
+https://github.com/dtz-labs/attribute-wars/
 
-The game focuses on fast 50 Hz action: lots of movement, tight controls, simple
-attribute-heavy visuals, and hardware page flipping where the machine supports it.
+Attribute Wars is a twin-joystick shooter for Timex and ZX Spectrum computers.
+Twin-joystick shooters became popular in the Xbox 360 / PlayStation 3 era:
+one stick moves the player, while the other stick chooses the direction of fire.
+It asks your brain to coordinate two independent streams of movement at once,
+which is exactly where the magic happens.
 
-## Supported Machines
+## Version 1.0 Targets
 
-| Machine | Status | Video | Sound |
+| Computer | Video | Sound | Joysticks |
 |---|---|---|---|
-| Timex TC2048 | primary target | SCLD page flipping | beeper |
-| Timex TC2068 / TS2068 | supported for AY testing | SCLD page flipping | AY music + FX |
-| ZX Spectrum 128K | separate build | shadow-screen page flipping | beeper for now |
-| ZX Spectrum 48K | separate build | single-buffer flicker | beeper |
+| Timex TC2048 | Timex SCLD double buffering | beeper; AY if an expansion is selected by the player | keyboard / Kempston-style schemes |
+| Timex TC2068 / TS2068 | Timex SCLD double buffering | AY-3-8910 music + FX | two native Timex joystick ports |
+| ZX Spectrum 128K / +2 | 128K shadow-screen double buffering | beeper in the current 1.0 page-flip TAP; the machine has AY, but the bundled PT3 player/tune needs a banked layout before it can ship with this renderer | Sinclair 1/2 joystick ports on +2 |
+| ZX Spectrum 48K | single-buffered display | beeper | keyboard / Sinclair-style schemes |
 
-## Build
+The ZX Spectrum 48K version flickers like crazy. That is expected: the machine
+does not have a second hardware display page for true double buffering.
 
-Requires z88dk in `~/Programowanie/z88dk`.
+## Credits
 
-```sh
-make              # show available targets
-make all          # build all TAPs in parallel
-make timex        # Timex TC2048/TC2068 -> build/game.tap
-make zx128        # ZX Spectrum 128K -> build/game-zx128.tap
-make zx48         # ZX Spectrum 48K -> build/game-zx48.tap
-make TARGET=zx128 # same as make zx128
-```
+The game was fully created by AI tools, **Claude Code** and **OpenAI Codex**,
+from the original idea and direction of **Michał Pasternak**,
+[@mpasternak79](https://x.com/mpasternak79).
 
-The TAP files include the loading screen converted from the original
-`assets/loading.png`. The old `build*.sh` scripts still work as Makefile
-wrappers.
+Music: **Pator**, [@paatorr](https://x.com/paatorr).
 
-## Run In ZEsarUX
+## Music License
 
-```sh
-make run-tc2048   # TC2048, beeper default
-make run-tc2068   # TC2068, Timex AY
-make run-zx128    # ZX Spectrum 128K, shadow-screen page flip
-make run-zx48     # ZX Spectrum 48K, single-buffer flicker
-```
+The bundled PT3 tune is **Spectrumizer** by Pator. Pator granted a personal,
+exclusive license to use this tune in this single game. The tune is not licensed
+under MIT and is not reusable outside Attribute Wars without separate permission
+from the composer.
 
-The old `run-zesarux*.sh` scripts still work as Makefile wrappers.
+## Developer Notes
 
-## Controls
-
-Choose controls on the title screen:
-
-- `1` Kempston move, keyboard fire
-- `2` keyboard move, Kempston fire
-- `3` two joysticks: TS2068/TC2068 in the Timex build, Sinclair 1/2 in the
-  ZX Spectrum builds
-
-Keyboard movement uses `5/6/7/8`. Keyboard fire uses `0` or the 8-way cluster
-`Q W E / A D / Z X C`.
-
-## Sound
-
-The title screen has a SOUND menu:
-
-- `4` BEEPER
-- `5` MUSIC+FX
-- `6` FX only
-
-Music is **Spectrumizer** by Pator, [@paatorr](https://x.com/paatorr).
-
-## Tests
-
-```sh
-./test/run.sh
-```
+- Build and run instructions: [docs/build.md](docs/build.md)
+- Architecture and hardware notes: [docs/architecture.md](docs/architecture.md)
 
 ## License
 
-Code: [MIT](LICENSE) © 2026 Michał Pasternak.
-
-The bundled PT3 tune is a third-party music asset and is not covered by the MIT
-license.
+The source code is [MIT licensed](LICENSE) © 2026 Michał Pasternak.

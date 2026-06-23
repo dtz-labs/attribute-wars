@@ -163,8 +163,8 @@ static void test_wave0_guard(void)
     check("wave0 spawns wave1 count (4)", alive == 4u);
 }
 
-/* ---- cap: late waves now use all 8 enemy slots ---- */
-static void test_spawn_wave16_cap8(void)
+/* ---- cap: late waves clamp to the 7-enemy gameplay limit ---- */
+static void test_spawn_wave16_cap7(void)
 {
     enemies_t es;
     u8 alive = 0u, nc = 0u, nh = 0u, i;
@@ -177,9 +177,9 @@ static void test_spawn_wave16_cap8(void)
             else if (es.e[i].level == ENEMY_HUNTER) nh++;
         }
     }
-    check("wave16 alive==8", alive == 8u);
+    check("wave16 alive==7", alive == 7u);
     check("wave16 n_chase==1", nc == 1u);
-    check("wave16 n_hunter==7", nh == 7u);
+    check("wave16 n_hunter==6", nh == 6u);
 }
 
 /* ---- in-bounds check over many waves ---- */
@@ -220,37 +220,56 @@ static void test_axis_bouncer_cap(void)
     }
 }
 
-/* ---- killed chasers split into diagonal bouncers when there is room ---- */
-static void test_chaser_split(void)
+/* ---- first-hit chasers jump away, while staying alive for the second hit ---- */
+static void test_chaser_wound_jump(void)
 {
     enemies_t es;
-    u8 i, spawned, alive = 0u, bouncers = 0u;
+    u8 i;
     for (i = 0u; i < MAX_ENEMIES; i++) {
         es.e[i].alive = 0u;
-        es.e[i].level = ENEMY_CHASE;
     }
-    spawned = enemies_spawn_chaser_splits(&es, 50u, 50u);
+    es.e[0].x = 50u;
+    es.e[0].y = 50u;
+    es.e[0].level = ENEMY_CHASE;
+    es.e[0].alive = 1u;
+    rng_seed(0x1234u);
+    enemies_jump_wounded_chasers(&es, 0x01u);
+    check("wounded chaser remains alive", es.e[0].alive == 1u);
+    check("wounded chaser jumped", es.e[0].x != 50u || es.e[0].y != 50u);
+    check("wounded chaser x in arena", es.e[0].x >= ARENA_L && es.e[0].x <= ARENA_R);
+    check("wounded chaser y in arena", es.e[0].y >= ARENA_T && es.e[0].y <= ARENA_B);
+}
+
+/* ---- killed hunters can clone only while there is room in the pool ---- */
+static void test_hunter_clones(void)
+{
+    enemies_t es;
+    u8 i, spawned, alive = 0u, hunters = 0u;
+    for (i = 0u; i < MAX_ENEMIES; i++) {
+        es.e[i].alive = 0u;
+    }
+    spawned = enemies_spawn_hunter_clones(&es, 80u, 80u);
     for (i = 0u; i < MAX_ENEMIES; i++) {
         if (es.e[i].alive) {
             alive++;
-            if (es.e[i].level == ENEMY_BOUNCE && es.e[i].dx && es.e[i].dy) {
-                bouncers++;
+            if (es.e[i].level == ENEMY_HUNTER) {
+                hunters++;
             }
-            check("split x in arena", es.e[i].x >= ARENA_L && es.e[i].x <= ARENA_R);
-            check("split y in arena", es.e[i].y >= ARENA_T && es.e[i].y <= ARENA_B);
+            check("hunter clone x in arena", es.e[i].x >= ARENA_L && es.e[i].x <= ARENA_R);
+            check("hunter clone y in arena", es.e[i].y >= ARENA_T && es.e[i].y <= ARENA_B);
         }
     }
-    check("chaser split spawned 2", spawned == 2u);
-    check("chaser split alive 2", alive == 2u);
-    check("chaser split diagonal bouncers", bouncers == 2u);
+    check("hunter clones spawned 2", spawned == 2u);
+    check("hunter clones alive 2", alive == 2u);
+    check("hunter clones are hunters", hunters == 2u);
 
     for (i = 0u; i < MAX_ENEMIES; i++) {
         es.e[i].alive = 1u;
         es.e[i].level = ENEMY_BOUNCE;
     }
     es.e[3].alive = 0u;
-    spawned = enemies_spawn_chaser_splits(&es, 80u, 80u);
-    check("chaser split respects cap", spawned == 1u);
+    spawned = enemies_spawn_hunter_clones(&es, 80u, 80u);
+    check("hunter clones respect cap", spawned == 1u);
 }
 
 /* ---- movement tests (unchanged from original) ---- */
@@ -326,10 +345,11 @@ int main(void)
     test_pattern_no_repeat();
     test_wave_loop();
     test_wave0_guard();
-    test_spawn_wave16_cap8();
+    test_spawn_wave16_cap7();
     test_all_waves_in_bounds();
     test_axis_bouncer_cap();
-    test_chaser_split();
+    test_chaser_wound_jump();
+    test_hunter_clones();
     test_movement();
 
     if (failures == 0) { printf("test_enemy: ALL PASS\n"); return 0; }
