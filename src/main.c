@@ -589,12 +589,12 @@ static void title_shine(u8 s)
 #define MENU_CY  60u
 #define MENU_R   40u
 
-/* Incremental dot trails: positions drawn into each buffer last time it was the
- * back one (2 frames stale), so we erase ONLY those dots, then redraw. Same
- * proven scheme as the in-game sprite erase -> fast (page-flipped, no box clear)
- * and the dots visibly translate. */
+/* Incremental dot trails: byte positions touched in each buffer last time it
+ * was the back one (2 frames stale), so we erase only those bytes, then redraw.
+ * Clearing the whole touched byte is still cheap and removes every stale bit
+ * left by a dot without falling back to a full box clear. */
 static u8 gv_n[2];
-static u8 gv_x[2][GLOBE_MAXPTS];
+static u8 gv_col[2][GLOBE_MAXPTS];
 static u8 gv_y[2][GLOBE_MAXPTS];
 
 static void globe_reset_trails(void) { gv_n[0] = 0u; gv_n[1] = 0u; }
@@ -606,8 +606,8 @@ static void globe_draw(u8 theta)
     u8  i, n, cnt;
 
     for (i = 0; i < gv_n[page]; i++) {     /* erase this buffer's previous dots */
-        u8 x = gv_x[page][i], y = gv_y[page][i];
-        ((u8 *)(base + scld_row_off[y]))[x >> 3] &= (u8)~(0x80u >> (x & 7u));
+        u8 col = gv_col[page][i], y = gv_y[page][i];
+        ((u8 *)(base + scld_row_off[y]))[col] = 0u;
     }
 
     n   = 0u;
@@ -617,7 +617,7 @@ static void globe_draw(u8 theta)
             u8 x = globe_x(i, theta);
             u8 y = globe_y(i);
             ((u8 *)(base + scld_row_off[y]))[x >> 3] |= (u8)(0x80u >> (x & 7u));
-            gv_x[page][n] = x;
+            gv_col[page][n] = (u8)(x >> 3);
             gv_y[page][n] = y;
             n++;
         }
