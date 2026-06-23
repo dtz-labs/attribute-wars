@@ -27,6 +27,19 @@ Each release ZIP contains these TAP files:
 
 Load the TAP file that matches your machine or emulator.
 
+## Play In Browser
+
+GitHub READMEs cannot embed the JSSpeccy 3 JavaScript emulator directly, but
+you can play the Spectrum builds in a browser:
+
+1. Open [JSSpeccy 3](https://jsspeccy.zxdemo.org/).
+2. Download
+   [attribute-wars-v1.0.0-taps.zip](https://github.com/dtz-labs/attribute-wars/releases/download/v1.0.0/attribute-wars-v1.0.0-taps.zip).
+3. In JSSpeccy 3, open the ZIP and select `aw-1.0-zx48k.tap` or
+   `aw-1.0-zx128k.tap`.
+
+Use `aw-1.0-timex.tap` in a Timex-capable emulator such as ZEsarUX.
+
 ## Build And Test
 
 ```sh
