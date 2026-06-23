@@ -124,6 +124,10 @@ static u8  bg_cells[BGPAT_CELLS];
 static u8  bg_cur_id = 0xFFu;   /* current pattern id (0xFF = none yet)        */
 static u16 bg_rng = 0xC0DEu;    /* private LCG so we never perturb game rng    */
 
+/* Gameplay entropy: stirred from player motion every frame, used to seed the
+ * game-over plasma so each run's death screen looks different. */
+static u16 g_entropy = 0xBEEFu;
+
 static u8 bg_rand(void)
 {
     bg_rng = (u16)(bg_rng * 25173u + 13849u);
@@ -434,32 +438,31 @@ static void put_wave_both(u8 col, u8 row, u8 w)
     put_char(SCLD_SCREEN_A, (u8)(col + 1), row, o); put_char(SCLD_SCREEN_B, (u8)(col + 1), row, o);
 }
 
-/* Game-over plasma: a STATIC interference field whose colours are cycled by
- * `phase` (palette rotation -> shimmer in place, no scroll). 8x8 standard
- * attributes (768 cells) into BOTH blocks -> cheap, smooth, and portable to any
- * machine. Dark papers keep the white text readable. The field is computed once
- * (it never changes); only the colour cycle animates. */
+/* Game-over plasma: a fixed interference field (built once per game-over from
+ * the run's entropy seed, so each death screen differs) whose colours are cycled
+ * by `phase` (palette rotation -> shimmer in place, no scroll). 8x8 standard
+ * attributes into BOTH blocks -> cheap, smooth, portable. Dark papers keep the
+ * white text readable. */
+static s16 g_plasma_field[768];
+
+static void plasma_build(u16 seed)
+{
+    u8 x, y;
+    u16 i = 0u;
+    for (y = 0; y < 24u; y++) {
+        for (x = 0; x < 32u; x++, i++) {
+            g_plasma_field[i] = plasma_field(x, y, seed);
+        }
+    }
+}
+
 static void plasma_render(u8 phase)
 {
-    static u8  init = 0u;
-    static s16 field[768];
     u8 *a = (u8 *)SCLD_ATTRS_A;
     u8 *b = (u8 *)SCLD_ATTRS_B;
     u16 i;
-
-    if (!init) {
-        u8 x, y;
-        i = 0u;
-        for (y = 0; y < 24u; y++) {
-            for (x = 0; x < 32u; x++, i++) {
-                field[i] = plasma_field(x, y);
-            }
-        }
-        init = 1u;
-    }
-
     for (i = 0; i < 768u; i++) {
-        u8 c = plasma_palette(field[i], phase);
+        u8 c = plasma_palette(g_plasma_field[i], phase);
         a[i] = c;
         b[i] = c;
     }
@@ -490,6 +493,8 @@ static u8 game_over_screen(const game_state_t *g, u8 death_wave)
     put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
     put_wave_both(27, 17, death_wave);
     put_text_both( 3, 19, "Q           NEW GAME");
+
+    plasma_build(g_entropy);          /* this run's plasma, shaped by play */
 
     for (;;) {
         intent_t in;
@@ -691,6 +696,11 @@ int main(void)
         /* ---- input + player ---- */
         input_read(player.facing, &in);
         player_update(&player, &in);
+
+        /* Stir entropy from how the ship moves (seeds the game-over plasma). */
+        g_entropy = (u16)(((g_entropy << 1) | (g_entropy >> 15))
+                          ^ ((u16)player.x + ((u16)player.y << 5)
+                             + (u16)player.facing + (u16)tick));
 
         if (cooldown) {
             cooldown--;

@@ -3,11 +3,14 @@
  */
 #include "plasma.h"
 
-s16 plasma_field(u8 x, u8 y)
+s16 plasma_field(u8 x, u8 y, u16 seed)
 {
-    return (s16)fx_sin[(u8)(x * PLA_KX)]
-         + (s16)fx_sin[(u8)(y * PLA_KY)]
-         + (s16)fx_sin[(u8)((u8)(x + y) * PLA_KD)];
+    u8 sx = (u8)seed;             /* per-axis phase offsets from the run seed */
+    u8 sy = (u8)(seed >> 5);
+    u8 sd = (u8)(seed >> 9);
+    return (s16)fx_sin[(u8)(x * PLA_KX + sx)]
+         + (s16)fx_sin[(u8)(y * PLA_KY + sy)]
+         + (s16)fx_sin[(u8)((u8)(x + y) * PLA_KD + sd)];
 }
 
 u8 plasma_palette(s16 v, u8 phase)

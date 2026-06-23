@@ -14,8 +14,9 @@
 #define PLA_KY 5u    /* y frequency (per cell row)    */
 #define PLA_KD 4u    /* diagonal frequency            */
 
-/* Static interference value at cell (x,y). Range approx [-381,381]. */
-s16 plasma_field(u8 x, u8 y);
+/* Interference value at cell (x,y). `seed` shifts the pattern so each run's
+ * game-over looks different (seeded from gameplay). Range approx [-381,381]. */
+s16 plasma_field(u8 x, u8 y, u16 seed);
 
 /* Map a field value to an attribute byte at animation `phase`: ink=white(7),
  * paper a DARK non-bright colour, the colour index rotated by `phase` so the
