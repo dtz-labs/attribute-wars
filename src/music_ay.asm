@@ -41,7 +41,12 @@
         EXTERN  asm_VT_INIT             ; vendored player: init, module addr in HL
         EXTERN  asm_VT_PLAY             ; vendored player: play one frame
         EXTERN  asm_VT_MUTE             ; vendored player: silence all channels
-        EXTERN  _spectrumizer_pt3       ; tune.asm: the PT3 module (label = addr)
+        IFNDEF  ZX128_PAGE_FLIP
+        EXTERN  _spectrumizer_pt3       ; tune.asm: resident module (Timex/48K)
+        ELSE
+        EXTERN  zx128_tune_in           ; zx128: tune banked at $C000, page it in
+        EXTERN  zx128_tune_out
+        ENDIF
         ENDIF
 
         EXTERN  _music_tick             ; C: play one frame + decay SFX (ISR calls it)
@@ -423,8 +428,16 @@ sm_noise:
 _pt3_init:
         push    ix
         push    iy
-        ld      hl,_spectrumizer_pt3    ; HL = module address (asm_VT_INIT arg)
+        IFDEF   ZX128_PAGE_FLIP
+        call    zx128_tune_in           ; map bank 4 ($C000) while the player reads
+        ld      hl,$C000                ; HL = banked module address
+        ELSE
+        ld      hl,_spectrumizer_pt3    ; HL = resident module address
+        ENDIF
         call    asm_VT_INIT
+        IFDEF   ZX128_PAGE_FLIP
+        call    zx128_tune_out          ; restore page 7 (shadow screen)
+        ENDIF
         pop     iy
         pop     ix
         ret
@@ -433,13 +446,23 @@ _pt3_init:
 _pt3_play_safe:
         push    ix
         push    iy
+        IFDEF   ZX128_PAGE_FLIP
+        call    zx128_tune_in           ; bank 4 in for the whole tick
+        ENDIF
         call    asm_VT_PLAY
         ld      a,(asm_VT_SETUP)
         bit     7,a                     ; player passed the PT3 loop/end point
         jr      z,pt3_play_done
+        IFDEF   ZX128_PAGE_FLIP
+        ld      hl,$C000                ; restart from the banked module base
+        ELSE
         ld      hl,_spectrumizer_pt3    ; restart from the beginning next tick
+        ENDIF
         call    asm_VT_INIT
 pt3_play_done:
+        IFDEF   ZX128_PAGE_FLIP
+        call    zx128_tune_out          ; restore page 7
+        ENDIF
         pop     iy
         pop     ix
         ret
