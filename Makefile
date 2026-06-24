@@ -59,6 +59,11 @@ CHECK_ZX128_LAYOUT ?= tools/check_zx128_layout.py
 CHECK_ZX_STACK_LAYOUT ?= tools/check_zx_stack_layout.py
 STACK_TOP := 65535
 ZX128_STACK_TOP := 49152
+# zx128 PT3 tune: shipped as a trailing tape block, loaded into bank 4 at $C000
+# by the running program (zx128_load_tune). The length must match the data the
+# tool wraps, so both derive from one wc -c.
+ZX128_TUNE := assets/spectrumizer.pt3
+ZX128_TUNE_LEN := $(shell wc -c < assets/spectrumizer.pt3 | tr -d ' ')
 TAP_PREFIX := aw-$(VERSION)
 CODE_PREFIX := aw-$(subst .,-,$(VERSION))
 TIMEX_CODE_BASE := $(BUILD)/$(CODE_PREFIX)-timex
@@ -127,11 +132,12 @@ ZX128_ORG := 24576
 $(ZX128_TAP): ORG := $(ZX128_ORG)
 $(ZX128_TAP): USRADDR := $(ZX128_ORG)
 $(ZX128_TAP): CLEARADDR := $(shell echo $$(($(ZX128_ORG) - 1)))
-$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
+$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm tools/make_tape_block.py $(ZX128_TUNE) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-zx128
 	cd $(BUILD)/obj-zx128 && $(ZCC_BASE) \
 		-DZX128_PAGE_FLIP -DZX_SINCLAIR_DUAL_STICK -DZX128_NO_MUSIC \
 		-Ca-DZX128_PAGE_FLIP -Ca-DZX128_NO_MUSIC \
+		-Ca-DZX128_TUNE_LEN=$(ZX128_TUNE_LEN) \
 		-pragma-define:CRT_ORG_CODE=$(ZX128_ORG) \
 		-pragma-define:REGISTER_SP=$(ZX128_STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(ROOT)/src/zx128_page.asm \
@@ -139,6 +145,7 @@ $(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm $(HE
 		-o $(ROOT)/$(ZX128_CODE_BASE) -create-app -m
 	$(CHECK_ZX128_LAYOUT) $(ZX128_CODE_BASE).map
 	$(call APPMAKE_TAP,$(ZX128_CODE_BASE),$@)
+	python3 tools/make_tape_block.py $(ZX128_TUNE) >> $@
 	rm -f $(ZX128_CODE_BASE).tap
 	ls -l $@
 

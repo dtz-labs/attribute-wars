@@ -46,6 +46,10 @@
 #include <string.h>       /* memset (game-over fills) */
 #include <input.h>        /* in_key_pressed + IN_KEY_SCANCODE_* (title/game-over) */
 
+#ifdef ZX128_PAGE_FLIP
+extern void zx128_load_tune(void);  /* pull the PT3 tune into bank 4 (zx128_page.asm) */
+#endif
+
 #define INVULN_FRAMES 50u /* ~1s of i-frames after a hit (ship blinks)         */
 #define BORDER_BLACK 0u
 #define BORDER_RED   2u
@@ -757,6 +761,9 @@ int main(void)
     spr_preshift(ps_enemy_hunter,  spr_enemy_hunter);
 #endif
     hud_init();                                  /* build the HUD heart sprite */
+#ifdef ZX128_PAGE_FLIP
+    zx128_load_tune();                /* tune -> bank 4 before any music_init */
+#endif
 
 main_menu:
     /* SOUND is applied after START on a cold title. Returning from a game keeps
