@@ -106,8 +106,15 @@ static u8     prevn[2];
  * there so the normal 0x8000..0xBFFF resident area has room for the stack. */
 #ifdef ZX128_PAGE_FLIP
 #define ZX128_SCRATCH_BASE 0xDB00u
-#define ps_ship_dir ((u8 *)(uintptr_t)ZX128_SCRATCH_BASE)
-#define ps_enemy    ((u8 *)(uintptr_t)(ZX128_SCRATCH_BASE + 8u * SPR_PRESHIFT_SIZE))
+/* 8 ship frames (slots 0..7) + 5 enemy frames (slots 8..12) = 13 pre-shift
+ * tables = 1664 B, 0xDB00..0xE180 -- clear of the IM2 vector table at 0xF000. */
+#define PS_AT(slot_) ((u8 *)(uintptr_t)(ZX128_SCRATCH_BASE + (slot_) * SPR_PRESHIFT_SIZE))
+#define ps_ship_dir      PS_AT(0)
+#define ps_enemy         PS_AT(8)
+#define ps_enemy_vbounce PS_AT(9)
+#define ps_enemy_hbounce PS_AT(10)
+#define ps_enemy_chase   PS_AT(11)
+#define ps_enemy_hunter  PS_AT(12)
 #define PS_SHIP_DIR(d_) (ps_ship_dir + (u16)(d_) * SPR_PRESHIFT_SIZE)
 #elif defined(AW_TIMEX_SPRITE_SCRATCH)
 /* Timex standard display uses screen B through 0x7AFF. AY IM2 uses 0x7B00
@@ -137,9 +144,6 @@ static u8 ps_enemy_hunter[SPR_PRESHIFT_SIZE];   /* level 3 hunter  */
 #if ENEMY_BOUNCE_H != 5
 #error "enemy_sprite_by_level assumes enemy levels 0..5; update the table"
 #endif
-#ifdef ZX128_PAGE_FLIP
-#define ENEMY_SPRITE(level_) ps_enemy
-#else
 static const u8 * const enemy_sprite_by_level[] = {
     ps_enemy, ps_enemy, ps_enemy_chase, ps_enemy_hunter,
     ps_enemy_vbounce, ps_enemy_hbounce
@@ -147,7 +151,6 @@ static const u8 * const enemy_sprite_by_level[] = {
 
 #define ENEMY_SPRITE(level_) \
     (((level_) <= ENEMY_BOUNCE_H) ? enemy_sprite_by_level[(level_)] : ps_enemy)
-#endif
 
 /* Wave time budget in frames for the active wave. Mirrors enemies_spawn()'s
  * index clamp (1-based wave; wave==0 -> wave 1; >16 loops at index 15) so the
@@ -754,12 +757,10 @@ int main(void)
     rng_seed(0xACE1u);
     { u8 d; for (d = 0; d < 8u; d++) spr_preshift(PS_SHIP_DIR(d), spr_ship_dir[d]); }
     spr_preshift(ps_enemy,         spr_enemy);  /* build pre-shifted tables once */
-#ifndef ZX128_PAGE_FLIP
     spr_preshift(ps_enemy_vbounce, spr_enemy_vbounce);
     spr_preshift(ps_enemy_hbounce, spr_enemy_hbounce);
     spr_preshift(ps_enemy_chase,   spr_enemy_chase);
     spr_preshift(ps_enemy_hunter,  spr_enemy_hunter);
-#endif
     hud_init();                                  /* build the HUD heart sprite */
 #ifdef ZX128_PAGE_FLIP
     zx128_load_tune();                /* tune -> bank 4 before any music_init */
