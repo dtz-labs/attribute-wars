@@ -64,6 +64,11 @@ ZX128_STACK_TOP := 49152
 # tool wraps, so both derive from one wc -c.
 ZX128_TUNE := assets/spectrumizer.pt3
 ZX128_TUNE_LEN := $(shell wc -c < assets/spectrumizer.pt3 | tr -d ' ')
+# Pre-wrapped headerless $$FF tape block (= the tune + 4 framing bytes), committed
+# so the build needs only `cat` (the z88dk CI docker image has no python3).
+# Regenerate when the tune changes:
+#   python3 tools/make_tape_block.py $(ZX128_TUNE) > $(ZX128_TUNE_BLOCK)
+ZX128_TUNE_BLOCK := assets/spectrumizer.tapblock
 TAP_PREFIX := aw-$(VERSION)
 CODE_PREFIX := aw-$(subst .,-,$(VERSION))
 TIMEX_CODE_BASE := $(BUILD)/$(CODE_PREFIX)-timex
@@ -133,7 +138,7 @@ ZX128_ORG := 24576
 $(ZX128_TAP): ORG := $(ZX128_ORG)
 $(ZX128_TAP): USRADDR := $(ZX128_ORG)
 $(ZX128_TAP): CLEARADDR := $(shell echo $$(($(ZX128_ORG) - 1)))
-$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/pt3prom.asm tools/make_tape_block.py $(ZX128_TUNE) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
+$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/pt3prom.asm $(ZX128_TUNE) $(ZX128_TUNE_BLOCK) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-zx128
 	cd $(BUILD)/obj-zx128 && $(ZCC_BASE) \
 		-DZX128_PAGE_FLIP -DZX_SINCLAIR_DUAL_STICK \
@@ -146,7 +151,9 @@ $(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/
 		-o $(ROOT)/$(ZX128_CODE_BASE) -create-app -m
 	$(CHECK_ZX128_LAYOUT) $(ZX128_CODE_BASE).map
 	$(call APPMAKE_TAP,$(ZX128_CODE_BASE),$@)
-	python3 tools/make_tape_block.py $(ZX128_TUNE) >> $@
+	@test "$$(wc -c < $(ZX128_TUNE_BLOCK) | tr -d ' ')" = "$$(( $(ZX128_TUNE_LEN) + 4 ))" || \
+		{ echo "ERROR: $(ZX128_TUNE_BLOCK) out of sync with $(ZX128_TUNE) (regenerate: python3 tools/make_tape_block.py $(ZX128_TUNE) > $(ZX128_TUNE_BLOCK))" >&2; exit 1; }
+	cat $(ZX128_TUNE_BLOCK) >> $@
 	rm -f $(ZX128_CODE_BASE).tap
 	ls -l $@
 
