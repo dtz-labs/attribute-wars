@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2026-06-24
 
 ### Added
 - **ZX Spectrum 128K: PT3 music, at full parity with the Timex build.** The
