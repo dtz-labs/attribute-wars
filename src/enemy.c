@@ -11,15 +11,9 @@
 #include "arena.h"
 #include "rng.h"
 
-#ifdef ZX128_NO_MUSIC
-/* ZX128 memory-constrained: keep original hunter params */
-#define DODGE_DIST 48u
-#define HUNTER_FLEE_SPEED 2
-#else
-/* Other platforms: tougher hunters */
+/* Hunter dodge distance + flee speed (uniform across all platforms). */
 #define DODGE_DIST 64u
 #define HUNTER_FLEE_SPEED 3
-#endif
 #define MAX_AXIS_BOUNCERS 2u    /* cap vertical/horizontal bouncers per wave */
 #define CHASER_WOUND_JUMP1 8u   /* first hit displacement (wound 3->2) */
 #define CHASER_WOUND_JUMP2 12u  /* second hit displacement (wound 2->1) */
@@ -361,8 +355,7 @@ u8 enemies_spawn_bouncer_clones(enemies_t *es, u8 x, u8 y)
     return spawned;
 }
 
-#ifndef ZX128_NO_MUSIC
-/* Chaser split logic (Timex/ZX48 only - ZX128 too memory-constrained) */
+/* Chaser split logic: a killed hunter spawns two chasers. */
 static u8 spawn_chaser_clone(enemies_t *es, u8 x, u8 y)
 {
     return spawn_clone(es, x, y, ENEMY_CHASE, 3u, (s8)0, (s8)0);
@@ -377,7 +370,6 @@ u8 enemies_spawn_chaser_clones(enemies_t *es, u8 x, u8 y)
         plus8_clamped(x, ARENA_R), minus8_clamped(y, ARENA_T)));
     return spawned;
 }
-#endif
 
 u8 enemies_any_alive(const enemies_t *es)
 {

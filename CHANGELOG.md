@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **ZX Spectrum 128K: PT3 music, at full parity with the Timex build.** The
+  ~10 KB tune is parked in RAM bank 4 and paged into `$C000` for each 50 Hz
+  player tick, so the page-flip shadow screen (page 7) and the banked tune
+  coexist. `MUSIC+FX` is now a real, default-when-AY-present menu option on 128K,
+  with sound effects overlaid on the tune exactly as on Timex.
+- **128K: AY sound effects now work** — previously the 128K build shipped with
+  the AY path stubbed out (silent). Resident code moved to ORG `$6000` to reclaim
+  the `$6000–$7FFF` hole (free on 128K, since screen B lives in page 7, not at
+  `$6000` as on Timex), and the IM2 vector table moved to page-7 RAM at `$F000`.
+- **128K: distinct enemy sprites** (chaser, hunter, vertical/horizontal bouncer)
+  instead of every enemy rendering as the bouncer — full visual parity, zero
+  extra per-frame render cost.
+- `tools/make_tape_block.py` — wraps a binary into a headerless tape data block
+  (used to append the tune to the 128K `.tap`).
+
+### Changed
+- **128K gameplay now matches Timex**: tougher hunters (dodge 64 / flee 3) and
+  hunters that split into 2 chasers, replacing the old memory-reduced 128K
+  variants. The `ZX128_NO_MUSIC` build flag was retired from the gameplay code.
+- Timex (`TC2048`/`TC2068`) and ZX 48K builds are byte-for-byte unchanged — the
+  work is isolated to the `zx128` target.
+
 ## [1.1.2] - 2026-06-23
 
 ### Fixed
