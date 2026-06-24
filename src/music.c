@@ -12,19 +12,7 @@
 #include "sfx.h"        /* SFX_* ids + SFX_N (AY SFX reuse the same ids)        */
 #include "rng.h"        /* rng_byte() for the explosion crackle                */
 
-#if defined(__SDCC) && defined(ZX128_NO_MUSIC)
-
-u8   music_default_sound(void) { return SOUND_BEEPER; }
-const char *music_status_text(void) { return "HW ZX128    AY OFF"; }
-u8   music_init(u8 mode)    { (void)mode; return 0; }
-void music_tick(void)       { }
-void music_stop(void)       { }
-u8   music_is_on(void)      { return 0; }
-u8   music_is_playing(void) { return 0; }
-void music_sfx(u8 id)       { (void)id; }
-void music_sfx_noise(void)  { }
-
-#elif defined(__SDCC)
+#if defined(__SDCC)
 
 /* The vendored PT3 player + our asm glue (music_ay.asm / pt3prom.asm). z88dk's
  * <psg/vt2.h> player ships only for the classic clib, so we vendor the player
@@ -35,15 +23,20 @@ extern u8   ay_machine_status(void);    /* packed machine/AY title status      *
 extern void ay_set_ports_std(void);     /* latch standard 128K AY ports        */
 extern void ay_sfx_out(void);           /* FX-only: emit channel-C state       */
 extern void ay_sfx_mute(void);          /* FX-only: silence channel C          */
+extern void music_im2_init(void);       /* IM1 -> IM2: the ISR drives the player */
+extern void music_im1_init(void);       /* IM2 -> IM1 for BEEPER/menu reset    */
+#ifndef ZX128_NO_MUSIC
+/* PT3 player (pt3prom.asm + tune.asm) -- not linked in ZX128 builds */
 extern void pt3_init(void);             /* load the tune + reset to the start  */
 extern void pt3_play_safe(void);        /* play one frame (IY-safe)            */
 extern void pt3_mute(void);             /* silence all channels                */
-extern void music_im2_init(void);       /* IM1 -> IM2: the ISR drives the player */
-extern void music_im1_init(void);       /* IM2 -> IM1 for BEEPER/menu reset    */
+#endif
 
 static u8 ay_on;        /* 1 when AY output is enabled for SFX */
-static u8 music_on;     /* 1 when the PT3 tune is playing      */
 static u8 sound_mode = SOUND_BEEPER;
+#ifndef ZX128_NO_MUSIC
+static u8 music_on;     /* 1 when the PT3 tune is playing      */
+#endif
 
 /* ---- AY channel-C sound effects --------------------------------------------
  * State read by the asm_vt_hardware_out merge in music_ay.asm: while asfx_vol>0
@@ -72,7 +65,12 @@ static const asfx_voice_t asfx_tbl[SFX_N] = {
 
 u8 music_default_sound(void)
 {
-    return ay_default_sound();
+    u8 snd = ay_default_sound();
+#ifdef ZX128_NO_MUSIC
+    /* PT3 music not available on ZX128 (binary size): cap default at FX-only. */
+    if (snd == SOUND_MUSIC_FX) snd = SOUND_FX;
+#endif
+    return snd;
 }
 
 const char *music_status_text(void)
@@ -88,27 +86,44 @@ const char *music_status_text(void)
 
 u8 music_init(u8 mode)
 {
+#ifdef ZX128_NO_MUSIC
+    /* PT3 music player not linked on ZX128: clamp MUSIC+FX to FX-only. */
+    if (mode == SOUND_MUSIC_FX) mode = SOUND_FX;
+#endif
+
     if (mode == sound_mode) {
         if (mode == SOUND_BEEPER && !ay_on) {
             return 0u;
         }
+#ifndef ZX128_NO_MUSIC
         if (mode == SOUND_FX && ay_on && !music_on) {
             return 1u;
         }
         if (mode == SOUND_MUSIC_FX && ay_on && music_on) {
             return 1u;
         }
+#else
+        if (mode == SOUND_FX && ay_on) {
+            return 1u;
+        }
+#endif
     }
 
     if (ay_on) {
+#ifndef ZX128_NO_MUSIC
         if (music_on) {
             pt3_mute();
         } else {
             ay_sfx_mute();
         }
+#else
+        ay_sfx_mute();
+#endif
     }
     ay_on = 0u;
+#ifndef ZX128_NO_MUSIC
     music_on = 0u;
+#endif
     asfx_vol = 0u;
     sound_mode = mode;
 
@@ -125,10 +140,12 @@ u8 music_init(u8 mode)
     }
 
     ay_on = 1u;
+#ifndef ZX128_NO_MUSIC
     if (mode == SOUND_MUSIC_FX) {
         music_on = 1u;
         pt3_init();                     /* hand the player the module, reset */
     }
+#endif
     music_im2_init();                   /* 50 Hz music/SFX envelope driver */
     return 1u;
 }
@@ -138,6 +155,7 @@ void music_tick(void)
     if (!ay_on) {
         return;
     }
+#ifndef ZX128_NO_MUSIC
     if (music_on) {
         pt3_play_safe();                /* play one frame (override merges SFX) */
     } else if (asfx_vol) {
@@ -149,15 +167,31 @@ void music_tick(void)
             ay_sfx_mute();              /* no PT3 player will overwrite amp C */
         }
     }
+#else
+    /* ZX128: FX-only (no PT3 player). Drive channel C directly. */
+    if (asfx_vol) {
+        ay_sfx_out();
+        asfx_vol = (u8)((asfx_vol > asfx_step) ? (asfx_vol - asfx_step) : 0u);
+        if (!asfx_vol) {
+            ay_sfx_mute();
+        }
+    }
+#endif
 }
 
 void music_stop(void)
 {
+#ifndef ZX128_NO_MUSIC
     if (music_on) {
         pt3_mute();
     } else if (ay_on) {
         ay_sfx_mute();
     }
+#else
+    if (ay_on) {
+        ay_sfx_mute();
+    }
+#endif
 }
 
 u8 music_is_on(void)
@@ -167,7 +201,11 @@ u8 music_is_on(void)
 
 u8 music_is_playing(void)
 {
+#ifndef ZX128_NO_MUSIC
     return music_on;
+#else
+    return 0u;
+#endif
 }
 
 void music_sfx(u8 id)

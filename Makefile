@@ -117,13 +117,25 @@ $(TIMEX_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN
 	rm -f $(TIMEX_CODE_BASE).tap
 	ls -l $@
 
-$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
+# The 128K page-flip build keeps RAM page 7 mapped at $C000 as the shadow
+# screen, so the resident program must stay below $C000. To fit the AY/FX code
+# (music_ay.asm + music.c) under that ceiling, this build ORGs the code LOWER
+# than the default $8000: on the 128K there is no Timex screen B at $6000, so
+# $6000-$7FFF is free RAM (the IM2 table moves to page 7 -- see music_ay.asm).
+# This reclaims ~8 KB and is 128K-only; the Timex/48K builds are unchanged.
+ZX128_ORG := 24576
+$(ZX128_TAP): ORG := $(ZX128_ORG)
+$(ZX128_TAP): USRADDR := $(ZX128_ORG)
+$(ZX128_TAP): CLEARADDR := $(shell echo $$(($(ZX128_ORG) - 1)))
+$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-zx128
 	cd $(BUILD)/obj-zx128 && $(ZCC_BASE) \
 		-DZX128_PAGE_FLIP -DZX_SINCLAIR_DUAL_STICK -DZX128_NO_MUSIC \
-		-Ca-DZX128_PAGE_FLIP \
+		-Ca-DZX128_PAGE_FLIP -Ca-DZX128_NO_MUSIC \
+		-pragma-define:CRT_ORG_CODE=$(ZX128_ORG) \
 		-pragma-define:REGISTER_SP=$(ZX128_STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(ROOT)/src/zx128_page.asm \
+		$(ROOT)/src/music_ay.asm \
 		-o $(ROOT)/$(ZX128_CODE_BASE) -create-app -m
 	$(CHECK_ZX128_LAYOUT) $(ZX128_CODE_BASE).map
 	$(call APPMAKE_TAP,$(ZX128_CODE_BASE),$@)

@@ -21,24 +21,29 @@
         SECTION code_user
 
         PUBLIC  _ay_detect              ; u8  ay_detect(void) -> 1 if an AY answered
-        PUBLIC  _pt3_init               ; void pt3_init(void): load+init the tune
-        PUBLIC  _pt3_play_safe          ; void pt3_play_safe(void): IY-safe play
-        PUBLIC  _pt3_mute               ; void pt3_mute(void): silence the AY
         PUBLIC  _music_im2_init          ; void music_im2_init(void): switch to IM2
         PUBLIC  _music_im1_init          ; void music_im1_init(void): switch to IM1
         PUBLIC  _ay_default_sound        ; u8  ay_default_sound(void): menu default
         PUBLIC  _ay_machine_status       ; u8  ay_machine_status(void): machine|AY
         PUBLIC  _ay_sfx_out              ; void ay_sfx_out(void): FX-only channel C
         PUBLIC  _ay_sfx_mute             ; void ay_sfx_mute(void): silence FX-only C
+
+; PT3 music player symbols -- only when the full player is linked
+; (omitted in ZX128_NO_MUSIC builds to stay under $C000)
+        IFNDEF  ZX128_NO_MUSIC
+        PUBLIC  _pt3_init               ; void pt3_init(void): load+init the tune
+        PUBLIC  _pt3_play_safe          ; void pt3_play_safe(void): IY-safe play
+        PUBLIC  _pt3_mute               ; void pt3_mute(void): silence the AY
         PUBLIC  asm_vt_hardware_out     ; override of z88dk's 128K-only output
         PUBLIC  asm_vt_hardware_out_A0
-
         EXTERN  asm_VT_AYREGS           ; 14-byte computed AY register file (player)
         EXTERN  asm_VT_SETUP            ; player setup/status flags (bit7=loop)
         EXTERN  asm_VT_INIT             ; vendored player: init, module addr in HL
         EXTERN  asm_VT_PLAY             ; vendored player: play one frame
         EXTERN  asm_VT_MUTE             ; vendored player: silence all channels
         EXTERN  _spectrumizer_pt3       ; tune.asm: the PT3 module (label = addr)
+        ENDIF
+
         EXTERN  _music_tick             ; C: play one frame + decay SFX (ISR calls it)
 
         ; channel-C sound-effect state (music.c); overlaid by sfx_merge below
@@ -321,12 +326,18 @@ _ay_sfx_mute:
         ret
 
 ; ---------------------------------------------------------------------------
+; PT3 player wrappers and AY register output -- only when the full player is
+; linked (omitted in ZX128_NO_MUSIC builds where pt3prom.asm/tune.asm are not
+; included). In FX-only (ZX128) mode, ay_sfx_out writes channel C directly
+; without needing asm_VT_AYREGS or the sfx_merge overlay.
+; ---------------------------------------------------------------------------
+        IFNDEF  ZX128_NO_MUSIC
+
 ; asm_vt_hardware_out [_A0] -- OVERRIDE of z88dk's output stage. Emit AY
 ; registers from asm_VT_AYREGS via the latched ports. Faithful to the library
 ; contract: the plain entry starts at register 0; the _A0 entry starts at the
 ; register index already in A; register 13 (envelope) is skipped when its byte
 ; has bit 7 set (the PT3 "don't retrigger the envelope" sentinel).
-; ---------------------------------------------------------------------------
 asm_vt_hardware_out:
         xor     a                       ; start at register 0
 asm_vt_hardware_out_A0:
@@ -369,14 +380,12 @@ vho_out:
         pop     hl
         ret
 
-; ---------------------------------------------------------------------------
 ; sfx_merge -- overlay the live channel-C sound effect onto asm_VT_AYREGS (the
 ; player keeps channels A+B). Sets amp C = _asfx_vol, and either tone C (R4/R5 +
 ; mixer tone-C enable) or noise (R6 + mixer noise-C enable) per _asfx_kind. The
 ; player recomputes AYREGS every frame, so this overlay is naturally transient:
 ; when the effect ends (_asfx_vol==0) channel C returns to the music. The AY
 ; mixer is active-LOW (a 0 bit enables that source). Clobbers A,B.
-; ---------------------------------------------------------------------------
 sfx_merge:
         ld      a,(_asfx_vol)
         ld      (asm_VT_AYREGS+10),a    ; amp C = SFX volume (fixed, no envelope)
@@ -405,12 +414,11 @@ sm_noise:
         ld      (asm_VT_AYREGS+6),a
         ret
 
-; ---------------------------------------------------------------------------
 ; C-callable wrappers around the vendored player. All save/restore IX and IY:
 ; the player trashes both (it is built for an ISR that saves the world), and IY
 ; is the sdcc_iy frame pointer. Parameterless (project convention); the tune
 ; address is wired in directly from tune.asm.
-; ---------------------------------------------------------------------------
+
 ; void pt3_init(void) -- load the module + reset the player to the start.
 _pt3_init:
         push    ix
@@ -445,6 +453,8 @@ _pt3_mute:
         pop     ix
         ret
 
+        ENDIF   ; !ZX128_NO_MUSIC
+
 ; ===========================================================================
 ; IM2 interrupt-driven music. Ticking the player from the 50 Hz frame interrupt
 ; (not the main loop) keeps the tune at exact tempo no matter how long a frame's
@@ -464,9 +474,27 @@ _pt3_mute:
 ; Only set up when an AY is present (music_init); a beeper-only machine keeps the
 ; ROM's IM1 handler unchanged.
 ; ===========================================================================
+; IM2 table location -- depends on the resident memory layout, which differs
+; between targets:
+;   Timex / 48K: program is ORG'd at 0x8000, so the free RAM hole at 0x7B00
+;       (after screen B's attributes at 0x7AFF) is the home, vector 0x7C7C.
+;   ZX128 page-flip: the resident program is ORG'd LOWER (0x6000) so the AY/FX
+;       code fits below 0xC000, which puts 0x7B00 INSIDE the program. Park the
+;       table in page 7's free RAM instead: the shadow screen uses 0xC000-0xDAFF
+;       and main.c's preshift tables live at 0xDB00..0xDF7F (9*128 B), so 0xF000
+;       sits ~4 KB above both. Page 7 is permanently mapped at 0xC000 in this
+;       build, and the table + vector are built at runtime (music_im2_init) --
+;       nothing is tape-loaded there -- so the address is always reachable when
+;       an interrupt fires.
+        IFDEF   ZX128_PAGE_FLIP
+IM2_TABLE equ 0xF000            ; page 7 free RAM, well above shadow screen+preshift
+IM2_FILL  equ 0xF1              ; table fill byte -> vector IM2_FILL*256+IM2_FILL
+IM2_VEC   equ 0xF1F1            ; = IM2_FILL*256 + IM2_FILL
+        ELSE
 IM2_TABLE equ 0x7B00            ; 256-aligned, in the free hole after screen B
 IM2_FILL  equ 0x7C              ; table fill byte -> vector IM2_FILL*256+IM2_FILL
 IM2_VEC   equ 0x7C7C            ; = IM2_FILL*256 + IM2_FILL
+        ENDIF
 
 ; void music_im2_init(void) -- build the IM2 table + jump, switch IM1 -> IM2.
 _music_im2_init:
