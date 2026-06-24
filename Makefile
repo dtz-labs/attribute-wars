@@ -73,7 +73,7 @@ TIMEX_TAP := $(BUILD)/$(TAP_PREFIX)-timex.tap
 ZX128_TAP := $(BUILD)/$(TAP_PREFIX)-zx128k.tap
 ZX48_TAP := $(BUILD)/$(TAP_PREFIX)-zx48k.tap
 
-.PHONY: help all target timex zx128 zx48 clean test measure run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48
+.PHONY: help all target timex zx128 zx48 clean test measure run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48 run-all-sequentially
 
 help:
 	@echo "Attribute Wars build targets"
@@ -90,6 +90,7 @@ help:
 	@echo "  make run-tc2068     run Timex TC2068 build"
 	@echo "  make run-zx128      run ZX Spectrum 128K build"
 	@echo "  make run-zx48       run ZX Spectrum 48K build"
+	@echo "  make run-all-sequentially  run all 4 configs back-to-back (close each window to advance)"
 	@echo
 	@echo "Other:"
 	@echo "  make test           run host unit tests"
@@ -203,6 +204,19 @@ run-zx48: zx48
 	@test -x "$(ZESARUX)" || { echo "ZEsarUX binary not found: $(ZESARUX)" >&2; exit 1; }
 	cd "$(ZESARUX_DIR)" && ./zesarux --noconfigfile --machine 48k \
 		--nosplash --verbose 0 "$(ROOT)/$(ZX48_TAP)"
+
+# Run all four machine configs back-to-back. Each launch BLOCKS until you close
+# the ZEsarUX window; closing one starts the next. All TAPs are built first.
+run-all-sequentially: timex zx128 zx48
+	@echo ">>> [1/4] Timex TC2048 -- close the ZEsarUX window to continue"
+	@$(MAKE) --no-print-directory run-tc2048
+	@echo ">>> [2/4] Timex TC2068 -- close the window to continue"
+	@$(MAKE) --no-print-directory run-tc2068
+	@echo ">>> [3/4] ZX Spectrum 128K -- close the window to continue"
+	@$(MAKE) --no-print-directory run-zx128
+	@echo ">>> [4/4] ZX Spectrum 48K -- close the window to finish"
+	@$(MAKE) --no-print-directory run-zx48
+	@echo ">>> all four configs done"
 
 clean:
 	rm -rf $(BUILD)
