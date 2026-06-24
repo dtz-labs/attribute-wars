@@ -82,3 +82,7 @@ enemies, bullets, and HUD deltas, then presents the page.
 
 Sprites are preshifted once at startup. The hot render path calls assembly
 blitters through small global parameter blocks to avoid SDCC call overhead.
+
+Render is the dominant per-frame cost (~58% of the measured worst-case
+subtotal). See [perf-budget.md](perf-budget.md) for the current T-state
+breakdown, the PT3/AY headroom note, and how to reproduce the measurements.
