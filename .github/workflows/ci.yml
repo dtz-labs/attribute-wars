@@ -17,7 +17,7 @@ jobs:
     name: host unit tests (pure logic)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run host unit tests
         # test/run.sh builds every test_*.c natively with -Wall -Wextra -Werror
         # and runs it -- no Z80 toolchain needed. This is also the hard lint gate.
@@ -27,7 +27,7 @@ jobs:
     name: build TAPs (z88dk)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Compile with z88dk (official Docker image)
         # Checkout runs on the host runner (which has Node for the JS action),
         # then the build runs inside the z88dk image. The Makefile skips its
@@ -59,7 +59,7 @@ jobs:
     name: cppcheck (advisory)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
       - name: Static analysis
