@@ -39,6 +39,14 @@ you can play the Spectrum builds in a browser:
 
 Use `aw-*-timex.tap` in a Timex-capable emulator such as ZEsarUX.
 
+> **Running the Timex build in ZEsarUX:** pick a Timex machine (TC2048 or
+> TC2068) **and enable Timex video**, otherwise ZEsarUX pops a repeated
+> "setting video mode" on-screen message every time the game flips its SCLD
+> display. On the command line that switch is `--enabletimexvideo`, e.g.
+> `zesarux --machine TC2048 --enabletimexvideo aw-1.2.0-timex.tap`; in the GUI
+> it lives under Settings → Video. The `make run-tc2048` / `make run-tc2068`
+> targets already pass it, which is why you don't see the message there.
+
 ## Build And Test
 
 ```sh
@@ -54,8 +62,14 @@ Full build and emulator notes are in [docs/build.md](docs/build.md).
 |---|---|---|---|
 | Timex TC2048 | Timex SCLD double buffering | beeper; AY if an expansion is selected by the player | keyboard / Kempston-style schemes |
 | Timex TC2068 / TS2068 | Timex SCLD double buffering | AY-3-8910 music + FX | two native Timex joystick ports |
-| ZX Spectrum 128K / +2 | 128K shadow-screen double buffering | beeper in the current page-flip TAP; the machine has AY, but the bundled PT3 player/tune needs a banked layout before it can ship with this renderer | Sinclair 1/2 joystick ports on +2 |
+| ZX Spectrum 128K / +2 | 128K shadow-screen double buffering | AY-3-8910 music + FX (PT3 tune banked into a spare RAM page) | Sinclair 1/2 joystick ports on +2 |
 | ZX Spectrum 48K | single-buffered display | beeper | keyboard / Sinclair-style schemes |
+
+The **ZX Spectrum 128K / +2** build now runs at full parity with the Timex
+build: the same PT3 music and AY sound effects (the ~10 KB tune is parked in a
+spare RAM bank and paged in for each 50 Hz player tick, so it coexists with the
+shadow-screen page flip), plus the same enemy variety and difficulty. Choose
+`MUSIC+FX`, `FX`, or `BEEPER` from the title screen.
 
 The ZX Spectrum 48K version flickers like crazy. That is expected: the machine
 does not have a second hardware display page for true double buffering.
