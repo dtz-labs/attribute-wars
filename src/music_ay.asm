@@ -522,6 +522,19 @@ IM2_VEC   equ 0x7C7C            ; = IM2_FILL*256 + IM2_FILL
 ; void music_im2_init(void) -- build the IM2 table + jump, switch IM1 -> IM2.
 _music_im2_init:
         di
+        IFDEF   ZX128_PAGE_FLIP
+        ; EXPERIMENTAL (DivMMC/DivIDE/PicoDIV reset on AY): page the storage
+        ; interface OUT before we take over IM2. esxdos auto-maps itself into
+        ; $0000-$3FFF on ROM fetches ($0038 etc.); in IM1 its handler runs every
+        ; frame and keeps that state consistent, but in IM2 we never hit $0038,
+        ; so esxdos is left half-mapped -> reset on some interfaces (PicoDIV).
+        ; Writing $00 to port $E3 clears CONMEM/MAPRAM and restores the normal
+        ; ROM; with no automap address fetched under IM2 it stays paged out.
+        ; Harmless on machines without the interface (port $E3 undecoded).
+        ld      bc,0x00E3
+        xor     a
+        out     (c),a
+        ENDIF
         ld      hl,IM2_TABLE            ; fill 257 bytes with IM2_FILL
         ld      de,IM2_TABLE+1
         ld      bc,256
