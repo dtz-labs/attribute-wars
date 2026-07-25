@@ -35,6 +35,10 @@ which is why 7-cap plays smoothly.
 on frames where a bullet is live (`main.c` skips the snapshot/collide/rescan on
 the common bulletless frame).
 
+The 2026-07-25 module split (main.c into background/fx/text/title/gameover/
+sprite_art, music_ay.asm into ay_ports/ay_sfx/pt3_glue/music_im2) was verified
+against this table and reproduced every figure exactly, to the tick.
+
 ### Comparison with the earlier 8-cap figures
 
 The previous run (worst-case hunter mix, 2026-06-23, recorded in `CLAUDE.md`)
@@ -68,8 +72,8 @@ pre-shifted + zero-fill erase + inlined `DOWN` and has little left to give:
   T/frame — often inaudible for a chiptune, needs an ear-check on real Timex;
 - or a lighter player / banked layout.
 
-The ZX128 page-flip build already ships without PT3 (`ZX128_NO_MUSIC`), so it
-has this 6.2k free today; the lever only matters for the Timex/ZX48 AY builds.
+All three builds now ship PT3 (the 128K reaches its tune through RAM bank 4),
+so this lever applies to every target.
 
 ## How to reproduce
 
