@@ -29,6 +29,19 @@ make run-zx128    # ZX Spectrum 128K / +2-style build
 make run-zx48     # ZX Spectrum 48K build
 ```
 
+### Emulator Configuration
+
+The `run*` targets start ZEsarUX with `--configfile tools/zesarux.rc` instead of
+the global `~/.zesaruxrc`, so runs are reproducible and never overwrite your own
+settings. That file holds the emulated Kempston joystick plus the host
+joystick/pad mapping, and the emulator is told not to save it on exit. The
+startup splash and welcome logo are suppressed.
+
+Remap the pad in a normal ZEsarUX session (which writes `~/.zesaruxrc`), then
+run `make zesarux-config` to copy the mapping back into `tools/zesarux.rc`.
+Extra one-off flags can still be passed via `ZESARUX_FLAGS`, for example
+`make run-zx128 ZESARUX_FLAGS="--zoom 3"`.
+
 ## Host Tests
 
 ```sh

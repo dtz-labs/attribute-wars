@@ -10,6 +10,7 @@
  */
 
 #include "scld.h"
+#include "scld_geom.h"  /* scld_scanline / scld_next_scanline */
 
 #include <string.h>      /* memset                                          */
 #include <z80.h>         /* z80_outp() -- OUT (port), byte                   */

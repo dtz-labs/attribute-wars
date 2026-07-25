@@ -6,16 +6,25 @@ logic and target-only hardware backends.
 
 ## Code Layout
 
-- `src/main.c` owns the title screen, game loop, HUD calls, wave flow, and render
-  orchestration.
+- `src/main.c` owns the 50 Hz game loop, wave flow, economy, and render
+  orchestration. The screens and effects it used to carry are their own
+  modules: `background.c` (generated floor, frame, ULA border), `fx.c` (hit
+  pops, death fireball, spawn telegraph), `text.c` (ROM-font blitting),
+  `title.c`, `gameover.c`, and `sprite_art.c` (pre-shifted sprite tables).
 - `src/player.c`, `src/bullet.c`, `src/enemy.c`, `src/collision.c`, `src/rng.c`,
   `src/score.c`, and `src/geometry.c` are pure logic and have host tests.
 - `src/scld.c` is the shared screen backend facade. Game code asks it for the
   current back buffer and never writes hardware paging ports directly.
 - `src/blit.asm`, `src/enemy_update.asm`, `src/collide.asm`, and `src/sfx.asm`
   hold hot Z80 paths.
-- `src/music_ay.asm`, `src/pt3prom.asm`, and `src/tune.asm` provide the AY/PT3
-  path for builds that include AY music.
+- `src/ay_ports.asm` (detection + the latched AY port pair), `src/ay_sfx.asm`
+  (FX-only channel C), `src/pt3_glue.asm` (player glue and the
+  `asm_vt_hardware_out` override), `src/music_im2.asm` (the 50 Hz ISR),
+  `src/pt3prom.asm` (vendored player) and `src/tune.asm` provide the AY/PT3
+  path.
+- `include/scld_geom.h` holds the two pure scanline-geometry helpers, kept out
+  of `scld.h` because sdcc emits a dead out-of-line copy of each `static
+  inline` into every unit that merely sees them.
 
 ## Platform Builds
 
@@ -49,12 +58,11 @@ The resident code, data, BSS, and stack must stay below `$C000`. The build is
 checked by `tools/check_zx128_layout.py`. Preshifted sprite tables for this
 build live in unused RAM page 7 space above the shadow screen.
 
-The current ZX128 page-flip TAP is deliberately built with `ZX128_NO_MUSIC`.
-Including the PT3 player and bundled tune in the resident image pushes the map
-to roughly `$F1C2`, which means code/data would be banked out whenever RAM page
-7 is mapped at `$C000`. Shipping AY music on this target needs a bank-aware
-tune/player layout or a renderer that pages the shadow screen only for short
-writes.
+The ZX128 build ships full AY music. The ~10 KB PT3 tune travels as a trailing
+headerless tape block that the running program loads into RAM bank 4 at
+`$C000`; the player is resident and the IM2 ISR pages bank 4 in for each 50 Hz
+tick through the `$7FFD` software shadow in `zx128_page.asm`. The IM2 vector
+table lives in page-7 free RAM at `$F000`.
 
 ### ZX Spectrum 48K
 
@@ -70,9 +78,9 @@ The title screen exposes three SOUND modes:
 - `FX`
 
 The AY/PT3 music path uses Pator's **Spectrumizer** tune. The Timex AY path is
-active on TC2068/TS2068, and TC2048 users can keep the beeper default. The ZX128
-page-flip build currently defines `ZX128_NO_MUSIC`, so that TAP is beeper-only
-until the AY player and tune are moved into a bank-safe layout.
+active on TC2068/TS2068, and TC2048 users can keep the beeper default. All
+three TAPs ship the same music; the 128K reaches it through the banked tune
+described above.
 
 ## Rendering
 

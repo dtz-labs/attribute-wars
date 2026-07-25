@@ -5,9 +5,9 @@
  * painted by main.c's bg_attr/bg_paint -- the HUD does NOT own the background):
  *   - top border (row 0):    lives as hearts (left) + shields as dots (right),
  *                            bitmap sprites into BOTH display files;
- *   - bottom border (row 23): the SCORE is drawn as text by main.c (left); the
+ *   - bottom border (row 23): the SCORE as bitmap text (left, via text.h); the
  *                            timer bar (middle) and the DASH gauge (right) are
- *                            attribute bars owned here.
+ *                            attribute bars.
  *
  * All HUD drawing targets BOTH display files (attrs 0x5800 + 0x7800; bitmaps via
  * the sprite path into screen A and B) so the page-flip never disturbs it. The
@@ -17,6 +17,7 @@
 #define HUD_H
 
 #include "types.h"
+#include "score.h"
 
 /* Attribute byte: FLASH(7) BRIGHT(6) PAPER(5-3) INK(2-0). Shared with main.c. */
 #define ATTR(bright, paper, ink) ((u8)(((bright) << 6) | ((paper) << 3) | (ink)))
@@ -37,6 +38,11 @@ void hud_draw_lives(u8 lives);
 
 /* Shields as dots, top border right, both bitmaps. Cached. */
 void hud_draw_shields(u8 shields);
+
+/* Score as 6 bitmap digits (bottom border, left), into both display files.
+ * Only the digits that changed are repainted; pass force=1 after a screen
+ * clear wiped them. */
+void hud_draw_score(const score_t *s, u8 force);
 
 /* Timer bar (bottom border, right): paper-filled proportional to
  * frames_left/frames_total, both attribute blocks. Cached on bar length. */

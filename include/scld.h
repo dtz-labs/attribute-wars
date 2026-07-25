@@ -78,55 +78,12 @@
 #define SCLD_ROW_BYTES  32u       /* bytes per pixel scanline (256/8)        */
 
 /* ---------------------------------------------------------------------------
- * scld_scanline -- leftmost byte address of pixel scanline `y` (0..191) in the
- * display file based at `base` (SCLD_SCREEN_A or SCLD_SCREEN_B). The ZX/Timex
- * bitmap is interleaved; the SCLD_ROW_BYTES bytes of one scanline are then
- * contiguous from the returned address. This is the bridge a sprite/line
- * blitter builds on (compute once, step rows) -- the cheap way to draw.
- *
- * Pure function (no hardware) -> inlined here so it is host-unit-testable and
- * costs nothing at the call site.
+ * scld_scanline() / scld_next_scanline() -- the pure geometry helpers -- now
+ * live in "scld_geom.h". They are `static inline`, so sdcc plants a dead
+ * out-of-line copy in every unit that sees them; including them only where
+ * they are used keeps that cost off the modules that just need the addresses
+ * and the backend calls below.
  * ------------------------------------------------------------------------- */
-static inline uint8_t *scld_scanline(uint16_t base, uint8_t y)
-{
-    uint16_t off = (uint16_t)(base
-            + ((uint16_t)(y & 0xC0u) << 5)    /* third (0/1/2)               */
-            + ((uint16_t)(y & 0x07u) << 8)    /* pixel row within char (0-7) */
-            + ((uint16_t)(y & 0x38u) << 2));  /* char row within third (0-7) */
-    /* via uintptr_t so this header compiles on the 64-bit host too (target
-     * pointers are 16-bit; the (uint16_t) above gives the real screen wrap). */
-    return (uint8_t *)(uintptr_t)off;
-}
-
-/* ---------------------------------------------------------------------------
- * scld_next_scanline -- given the byte address of one pixel scanline, return
- * the address of the scanline directly below it, WITHOUT recomputing from y.
- * This is the cheap way to walk an 8-pixel-tall sprite down the interleaved
- * screen (compute scld_scanline once, then step). It implements the classic
- * Z80 "down a line" carry across the pixel-row / char-row / third boundaries.
- *
- * Valid for scanlines 0..190 (stepping from y=191 would leave the bitmap);
- * blitters clip at the bottom edge instead of stepping past it.
- *
- * Pure -> inlined here, host-testable against scld_scanline.
- * ------------------------------------------------------------------------- */
-static inline uint16_t scld_next_scanline(uint16_t a)
-{
-    uint8_t h = (uint8_t)(a >> 8);
-    uint8_t l = (uint8_t)(a & 0xFFu);
-
-    h++;                                  /* ++pixel row (ripples into third)   */
-    if ((h & 0x07u) != 0u) {              /* still inside the char cell         */
-        return (uint16_t)(((uint16_t)h << 8) | l);
-    }
-    {
-        uint8_t nl = (uint8_t)(l + 0x20u);   /* ++char row                      */
-        if (nl >= l) {                       /* no carry -> undo the third ripple */
-            h = (uint8_t)(h - 0x08u);
-        }
-        return (uint16_t)(((uint16_t)h << 8) | nl);
-    }
-}
 
 /* ---------------------------------------------------------------------------
  * scld_row_off[y] -- precomputed interleaved byte offset of pixel scanline y

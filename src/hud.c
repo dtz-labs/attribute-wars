@@ -8,8 +8,10 @@
  */
 #include "hud.h"
 #include "scld.h"
+#include "scld_geom.h"  /* scld_scanline / scld_next_scanline */
 #include "sprite.h"
 #include "sprites.h"   /* spr_heart */
+#include "text.h"      /* put_char: the score is bitmap text */
 #include <string.h>    /* memset (top-border bitmap clears) */
 
 void hud_init(void)
@@ -113,6 +115,24 @@ void hud_draw_timer(u16 frames_left, u16 frames_total)
     }
     last_timer_len = len;
     draw_bar(TIMER_COL0, TIMER_CELLS, len, ATTR_TIMER);
+}
+
+/* ---- bottom-border score (bitmap text, left) --------------------------- */
+/* Redraws ONLY the digits that changed since the last call, so a per-shot -5
+ * does not repaint all six glyphs every shot. Pass force=1 after a scld_clear
+ * wiped the score bitmap (init/respawn). */
+static u8 last_score[6] = { 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu };
+
+void hud_draw_score(const score_t *s, u8 force)
+{
+    u8 i;
+    for (i = 0; i < 6u; i++) {
+        if (force || s->digits[i] != last_score[i]) {
+            last_score[i] = s->digits[i];
+            put_char(SCLD_SCREEN_A, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
+            put_char(SCLD_SCREEN_B, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
+        }
+    }
 }
 
 void hud_invalidate(void)

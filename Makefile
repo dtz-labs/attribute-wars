@@ -33,6 +33,18 @@ ZCC ?= $(if $(wildcard $(Z88DK_BIN)/zcc),$(Z88DK_BIN)/zcc,zcc)
 APPMAKE ?= $(if $(wildcard $(Z88DK_BIN)/z88dk-appmake),$(Z88DK_BIN)/z88dk-appmake,z88dk-appmake)
 ZESARUX ?= /Applications/ZEsarUX.app/Contents/MacOS/zesarux
 ZESARUX_DIR := $(dir $(ZESARUX))
+ZESARUX_CONFIG ?= $(ROOT)/tools/zesarux.rc
+ZESARUX_FLAGS ?=
+
+# --configfile must come first; it replaces ~/.zesaruxrc and carries the
+# joystick mapping. --nosplash/--nowelcomemessage skip the startup logo.
+ZESARUX_BASE = --configfile "$(ZESARUX_CONFIG)" --nosplash --nowelcomemessage \
+	--verbose 0
+
+define check-zesarux
+@test -x "$(ZESARUX)" || { echo "ZEsarUX binary not found: $(ZESARUX)" >&2; exit 1; }
+@test -f "$(ZESARUX_CONFIG)" || { echo "ZEsarUX config not found: $(ZESARUX_CONFIG)" >&2; exit 1; }
+endef
 
 ORG := 32768
 CLEARADDR := 32767
@@ -40,16 +52,20 @@ USRADDR := 32768
 LOADING_SCREEN := assets/loading.scr
 
 COMMON_C := \
-	src/main.c src/scld.c src/sprite.c src/sprites.c src/player.c \
-	src/bullet.c src/enemy.c src/collision.c src/geometry.c src/input.c \
-	src/rng.c src/score.c src/sfx.c src/hud.c src/music.c
+	src/main.c src/scld.c src/sprite.c src/sprites.c src/sprite_art.c \
+	src/background.c src/fx.c src/text.c src/title.c src/gameover.c \
+	src/player.c src/bullet.c src/enemy.c src/collision.c src/geometry.c \
+	src/input.c src/rng.c src/score.c src/sfx.c src/hud.c src/music.c
 
 COMMON_ASM := src/blit.asm src/enemy_update.asm src/collide.asm src/sfx.asm
-MUSIC_ASM := src/music_ay.asm src/pt3prom.asm src/tune.asm
+AY_ASM := src/ay_ports.asm src/ay_sfx.asm src/music_im2.asm
+MUSIC_ASM := $(AY_ASM) src/pt3_glue.asm src/pt3prom.asm src/tune.asm
 HEADERS := $(wildcard include/*.h)
 COMMON_C_ABS := $(addprefix $(ROOT)/,$(COMMON_C))
 COMMON_ASM_ABS := $(addprefix $(ROOT)/,$(COMMON_ASM))
 MUSIC_ASM_ABS := $(addprefix $(ROOT)/,$(MUSIC_ASM))
+ZX128_MUSIC_ASM := $(AY_ASM) src/pt3_glue.asm src/pt3prom.asm
+ZX128_MUSIC_ASM_ABS := $(addprefix $(ROOT)/,$(ZX128_MUSIC_ASM))
 
 ZCC_BASE := $(ZCC) +zx -SO3 -clib=sdcc_iy -startup=31 -iquote$(ROOT)/include \
 	$(VERSION_DEFINES)
@@ -78,7 +94,7 @@ TIMEX_TAP := $(BUILD)/$(TAP_PREFIX)-timex.tap
 ZX128_TAP := $(BUILD)/$(TAP_PREFIX)-zx128k.tap
 ZX48_TAP := $(BUILD)/$(TAP_PREFIX)-zx48k.tap
 
-.PHONY: help all target timex zx128 zx48 clean test measure run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48 run-all-sequentially
+.PHONY: help all target timex zx128 zx48 clean test measure run run-timex run-tc2048 run-tc2068 run-ay run-zx128 run-zx48 run-zx128-esxdos run-all-sequentially zesarux-config
 
 help:
 	@echo "Attribute Wars build targets"
@@ -95,11 +111,13 @@ help:
 	@echo "  make run-tc2068     run Timex TC2068 build"
 	@echo "  make run-zx128      run ZX Spectrum 128K build"
 	@echo "  make run-zx48       run ZX Spectrum 48K build"
+	@echo "  make run-zx128-esxdos      run 128K build with DivIDE+esxdos (reproduce the +2 reset)"
 	@echo "  make run-all-sequentially  run all 4 configs back-to-back (close each window to advance)"
 	@echo
 	@echo "Other:"
 	@echo "  make test           run host unit tests"
 	@echo "  make measure        build T-state harness and print marker addresses"
+	@echo "  make zesarux-config re-copy the host joystick mapping from ~/.zesaruxrc"
 	@echo "  make clean          remove build/"
 
 all:
@@ -130,15 +148,16 @@ $(TIMEX_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN
 
 # The 128K page-flip build keeps RAM page 7 mapped at $C000 as the shadow
 # screen, so the resident program must stay below $C000. To fit the AY/FX code
-# (music_ay.asm + music.c) under that ceiling, this build ORGs the code LOWER
-# than the default $8000: on the 128K there is no Timex screen B at $6000, so
-# $6000-$7FFF is free RAM (the IM2 table moves to page 7 -- see music_ay.asm).
+# (the ay_*/pt3_glue/music_im2 asm + music.c) under that ceiling, this build
+# ORGs the code LOWER than the default $8000: on the 128K there is no Timex
+# screen B at $6000, so $6000-$7FFF is free RAM (the IM2 table moves to page 7
+# -- see music_im2.asm).
 # This reclaims ~8 KB and is 128K-only; the Timex/48K builds are unchanged.
 ZX128_ORG := 24576
 $(ZX128_TAP): ORG := $(ZX128_ORG)
 $(ZX128_TAP): USRADDR := $(ZX128_ORG)
 $(ZX128_TAP): CLEARADDR := $(shell echo $$(($(ZX128_ORG) - 1)))
-$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/pt3prom.asm $(ZX128_TUNE) $(ZX128_TUNE_BLOCK) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
+$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm $(ZX128_MUSIC_ASM) $(ZX128_TUNE) $(ZX128_TUNE_BLOCK) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-zx128
 	cd $(BUILD)/obj-zx128 && $(ZCC_BASE) \
 		-DZX128_PAGE_FLIP -DZX_SINCLAIR_DUAL_STICK \
@@ -147,7 +166,7 @@ $(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/
 		-pragma-define:CRT_ORG_CODE=$(ZX128_ORG) \
 		-pragma-define:REGISTER_SP=$(ZX128_STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(ROOT)/src/zx128_page.asm \
-		$(ROOT)/src/music_ay.asm $(ROOT)/src/pt3prom.asm \
+		$(ZX128_MUSIC_ASM_ABS) \
 		-o $(ROOT)/$(ZX128_CODE_BASE) -create-app -m
 	$(CHECK_ZX128_LAYOUT) $(ZX128_CODE_BASE).map
 	$(call APPMAKE_TAP,$(ZX128_CODE_BASE),$@)
@@ -191,26 +210,39 @@ run: run-tc2048
 run-timex: run-tc2048
 
 run-tc2048: timex
-	@test -x "$(ZESARUX)" || { echo "ZEsarUX binary not found: $(ZESARUX)" >&2; exit 1; }
-	cd "$(ZESARUX_DIR)" && ./zesarux --noconfigfile --machine TC2048 \
-		--enabletimexvideo --joystickemulated Kempston --nosplash --verbose 0 \
+	$(check-zesarux)
+	cd "$(ZESARUX_DIR)" && ./zesarux $(ZESARUX_BASE) \
+		--machine TC2048 --enabletimexvideo $(ZESARUX_FLAGS) \
 		"$(ROOT)/$(TIMEX_TAP)"
 
 run-tc2068 run-ay: timex
-	@test -x "$(ZESARUX)" || { echo "ZEsarUX binary not found: $(ZESARUX)" >&2; exit 1; }
-	cd "$(ZESARUX_DIR)" && ./zesarux --noconfigfile --machine TC2068 \
-		--enabletimexvideo --joystickemulated Kempston --nosplash --verbose 0 \
+	$(check-zesarux)
+	cd "$(ZESARUX_DIR)" && ./zesarux $(ZESARUX_BASE) \
+		--machine TC2068 --enabletimexvideo $(ZESARUX_FLAGS) \
 		"$(ROOT)/$(TIMEX_TAP)"
 
 run-zx128: zx128
-	@test -x "$(ZESARUX)" || { echo "ZEsarUX binary not found: $(ZESARUX)" >&2; exit 1; }
-	cd "$(ZESARUX_DIR)" && ./zesarux --noconfigfile --machine 128k \
-		--nosplash --verbose 0 "$(ROOT)/$(ZX128_TAP)"
+	$(check-zesarux)
+	cd "$(ZESARUX_DIR)" && ./zesarux $(ZESARUX_BASE) \
+		--machine 128k $(ZESARUX_FLAGS) "$(ROOT)/$(ZX128_TAP)"
 
 run-zx48: zx48
-	@test -x "$(ZESARUX)" || { echo "ZEsarUX binary not found: $(ZESARUX)" >&2; exit 1; }
-	cd "$(ZESARUX_DIR)" && ./zesarux --noconfigfile --machine 48k \
-		--nosplash --verbose 0 "$(ROOT)/$(ZX48_TAP)"
+	$(check-zesarux)
+	cd "$(ZESARUX_DIR)" && ./zesarux $(ZESARUX_BASE) \
+		--machine 48k $(ZESARUX_FLAGS) "$(ROOT)/$(ZX48_TAP)"
+
+# Reproduce the reported +2 / DivIDE-esxdos reset: run the 128K build with DivIDE
+# paging + the esxdos traps handler active (the "USR 0 -> esxdos" environment a
+# user reported resetting on the AY sound paths). This emulates the automapping
+# without needing a firmware ROM or SD image. To debug the reset, open ZEsarUX's
+# CPU debugger when it happens and check $7FFD (is paging locked, bit 5?) and the
+# PC (jumped to $0000 / esxdos via a bad IM2 vector?).
+run-zx128-esxdos: zx128
+	$(check-zesarux)
+	cd "$(ZESARUX_DIR)" && ./zesarux $(ZESARUX_BASE) \
+		--machine 128k --enable-divide-paging --enable-esxdos-handler \
+		--esxdos-root-dir "$(ROOT)/$(BUILD)" $(ZESARUX_FLAGS) \
+		"$(ROOT)/$(ZX128_TAP)"
 
 # Run all four machine configs back-to-back. Each launch BLOCKS until you close
 # the ZEsarUX window; closing one starts the next. All TAPs are built first.
@@ -224,6 +256,22 @@ run-all-sequentially: timex zx128 zx48
 	@echo ">>> [4/4] ZX Spectrum 48K -- close the window to finish"
 	@$(MAKE) --no-print-directory run-zx48
 	@echo ">>> all four configs done"
+
+# Re-copy the real joystick mapping from the global ZEsarUX config into
+# tools/zesarux.rc, keeping everything above the sentinel line intact.
+zesarux-config:
+	@test -f "$(HOME)/.zesaruxrc" || \
+		{ echo "No $(HOME)/.zesaruxrc to copy joystick settings from" >&2; exit 1; }
+	@joy=$$(grep -E '^--(joystick|realjoystick|steering-wheel)' "$(HOME)/.zesaruxrc" \
+			| grep -v '^--joystickemulated' | sed -e 's/[[:space:]]*$$//'); \
+	if [ -z "$$joy" ]; then \
+		echo "No joystick settings found in $(HOME)/.zesaruxrc" >&2; exit 1; \
+	fi; \
+	awk '{ print } /^;--- BEGIN generated/ { exit }' "$(ZESARUX_CONFIG)" \
+		> "$(ZESARUX_CONFIG).new"; \
+	printf '%s\n' "$$joy" >> "$(ZESARUX_CONFIG).new"; \
+	mv "$(ZESARUX_CONFIG).new" "$(ZESARUX_CONFIG)"; \
+	echo "Updated $(ZESARUX_CONFIG) from $(HOME)/.zesaruxrc"
 
 clean:
 	rm -rf $(BUILD)
