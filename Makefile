@@ -58,11 +58,14 @@ COMMON_C := \
 	src/input.c src/rng.c src/score.c src/sfx.c src/hud.c src/music.c
 
 COMMON_ASM := src/blit.asm src/enemy_update.asm src/collide.asm src/sfx.asm
-MUSIC_ASM := src/music_ay.asm src/pt3prom.asm src/tune.asm
+AY_ASM := src/ay_ports.asm src/ay_sfx.asm src/music_im2.asm
+MUSIC_ASM := $(AY_ASM) src/pt3_glue.asm src/pt3prom.asm src/tune.asm
 HEADERS := $(wildcard include/*.h)
 COMMON_C_ABS := $(addprefix $(ROOT)/,$(COMMON_C))
 COMMON_ASM_ABS := $(addprefix $(ROOT)/,$(COMMON_ASM))
 MUSIC_ASM_ABS := $(addprefix $(ROOT)/,$(MUSIC_ASM))
+ZX128_MUSIC_ASM := $(AY_ASM) src/pt3_glue.asm src/pt3prom.asm
+ZX128_MUSIC_ASM_ABS := $(addprefix $(ROOT)/,$(ZX128_MUSIC_ASM))
 
 ZCC_BASE := $(ZCC) +zx -SO3 -clib=sdcc_iy -startup=31 -iquote$(ROOT)/include \
 	$(VERSION_DEFINES)
@@ -145,15 +148,16 @@ $(TIMEX_TAP): $(COMMON_C) $(COMMON_ASM) $(MUSIC_ASM) $(HEADERS) $(LOADING_SCREEN
 
 # The 128K page-flip build keeps RAM page 7 mapped at $C000 as the shadow
 # screen, so the resident program must stay below $C000. To fit the AY/FX code
-# (music_ay.asm + music.c) under that ceiling, this build ORGs the code LOWER
-# than the default $8000: on the 128K there is no Timex screen B at $6000, so
-# $6000-$7FFF is free RAM (the IM2 table moves to page 7 -- see music_ay.asm).
+# (the ay_*/pt3_glue/music_im2 asm + music.c) under that ceiling, this build
+# ORGs the code LOWER than the default $8000: on the 128K there is no Timex
+# screen B at $6000, so $6000-$7FFF is free RAM (the IM2 table moves to page 7
+# -- see music_im2.asm).
 # This reclaims ~8 KB and is 128K-only; the Timex/48K builds are unchanged.
 ZX128_ORG := 24576
 $(ZX128_TAP): ORG := $(ZX128_ORG)
 $(ZX128_TAP): USRADDR := $(ZX128_ORG)
 $(ZX128_TAP): CLEARADDR := $(shell echo $$(($(ZX128_ORG) - 1)))
-$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/pt3prom.asm $(ZX128_TUNE) $(ZX128_TUNE_BLOCK) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
+$(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm $(ZX128_MUSIC_ASM) $(ZX128_TUNE) $(ZX128_TUNE_BLOCK) $(HEADERS) $(LOADING_SCREEN) tools/check_zx128_layout.py | $(BUILD)
 	mkdir -p $(BUILD)/obj-zx128
 	cd $(BUILD)/obj-zx128 && $(ZCC_BASE) \
 		-DZX128_PAGE_FLIP -DZX_SINCLAIR_DUAL_STICK \
@@ -162,7 +166,7 @@ $(ZX128_TAP): $(COMMON_C) $(COMMON_ASM) src/zx128_page.asm src/music_ay.asm src/
 		-pragma-define:CRT_ORG_CODE=$(ZX128_ORG) \
 		-pragma-define:REGISTER_SP=$(ZX128_STACK_TOP) \
 		$(COMMON_C_ABS) $(COMMON_ASM_ABS) $(ROOT)/src/zx128_page.asm \
-		$(ROOT)/src/music_ay.asm $(ROOT)/src/pt3prom.asm \
+		$(ZX128_MUSIC_ASM_ABS) \
 		-o $(ROOT)/$(ZX128_CODE_BASE) -create-app -m
 	$(CHECK_ZX128_LAYOUT) $(ZX128_CODE_BASE).map
 	$(call APPMAKE_TAP,$(ZX128_CODE_BASE),$@)
