@@ -168,7 +168,46 @@ One commit per step so any of them can be reverted alone:
 7. `hud_draw_score` 8. wave-init helper 9. asm split 10. `ZX128_NO_MUSIC`
 removal 11. docs
 
-## 9. Out of scope
+## 9. Outcome (recorded after implementation)
+
+Delivered as designed, with two deviations worth recording.
+
+**An unplanned fix became mandatory.** `scld.h` defined `scld_scanline` and
+`scld_next_scanline` as `static inline`, and sdcc emits a *dead* out-of-line
+copy of each (~95 B, zero call sites) into every translation unit that merely
+includes the header. Going from one such unit to six pushed the image +461 B and
+broke the ZX48 stack-gap check (249 B free against a 512 B requirement). The two
+helpers moved into `scld_geom.h`, included only by the four modules that
+actually compute scanline addresses in C. That took the total to **+11 B per
+target** and retired the dead copy the baseline had been carrying all along.
+
+**Step 8 (the wave-init helper) was implemented, measured, and reverted.** The
+six-line wave-clock block is genuinely duplicated three times, but hoisting it
+required a seven-out-pointer signature and cost **+117 B** — a bad trade on a
+target where the ZX48 stack margin is ~700 B. The claim that motivated it was
+also partly wrong: `hud_invalidate()` is called on both paths, and the real
+differences between the three sites (`fx_clear`, `border_reset`, i-frames) are
+deliberate. `main.c` therefore ends at **556 lines** rather than the projected
+~530.
+
+Final measurements against `pre-refactor-1.2.0`:
+
+| check | result |
+|---|---|
+| host tests | all pass |
+| three builds + both layout checks | pass (ZX128 BSS `$ABB8`; ZX48 gap 699 B; Timex gap 1148 B) |
+| CODE.bin | timex 31608 → 31619, zx128 19373 → 19384, zx48 32057 → 32068 (**+11 B**) |
+| `enemies_update` | 1 404 148 → 1 404 148 (**0**) |
+| `collide` | 638 989 → 638 989 (**0**) |
+| `player_hit` | 102 363 → 102 363 (**0**) |
+| `render` | 4 634 000 → 4 634 000 (**0**) |
+| PT3 tick | 1 244 771 → 1 244 771 (**0**) |
+
+The +11 B is the call/return plumbing of `sprite_art_init()`,
+`bg_next_pattern()` and `border_reset()` — all startup or once-per-run paths,
+none of them inside the frame loop.
+
+## 10. Out of scope
 
 - `pt3prom.asm` (vendored)
 - `enemy.c` / `enemy_update.asm` and their byte-identical C/asm twin contract
