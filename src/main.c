@@ -37,6 +37,8 @@
 #include "collision.h"
 #include "controls.h"
 #include "arena.h"
+#include "background.h"    /* generated floor + frame + ULA border             */
+#include "fx.h"            /* hit pops, death fireball, spawn telegraph        */
 #include "rng.h"
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
@@ -52,9 +54,6 @@ extern void zx128_load_tune(void);  /* pull the PT3 tune into bank 4 (zx128_page
 #endif
 
 #define INVULN_FRAMES 50u /* ~1s of i-frames after a hit (ship blinks)         */
-#define BORDER_BLACK 0u
-#define BORDER_RED   2u
-#define BORDER_FLASH_FRAMES 4u
 
 /* Max objects drawn in one frame: player + enemies + bullets + muzzle flash. */
 #define MAX_DRAW (1u + MAX_ENEMIES + MAX_BULLETS + 1u)
@@ -122,148 +121,6 @@ static s8 step_sign(s8 v)
     return 0;
 }
 
-#define BG_CHECKER 0u
-#define BG_DIAGONAL 1u
-#define BG_GRID    2u
-
-static u8 bg_pattern = BG_GRID;
-static u8 border_flash;
-
-static void border_flash_red(void)
-{
-    border_flash = BORDER_FLASH_FRAMES;
-}
-
-static void border_tick(void)
-{
-    if (border_flash) {
-        border_flash--;
-        z80_outp(0xFEu, (border_flash & 1u) ? BORDER_RED : BORDER_BLACK);
-    } else {
-        z80_outp(0xFEu, BORDER_BLACK);
-    }
-}
-
-/* Background attribute for one cell: a bright-magenta frame all the way around
- * the screen (rows 0/23 + cols 0/31), with WHITE ink so the HUD text/sprites
- * drawn on the frame stay readable, over a black/dark-blue generated floor.
- * Used both to paint the arena and to RESTORE a cell after an explosion /
- * telegraph pulse. */
-static u8 bg_attr(u8 row, u8 col)
-{
-    u8 blue;
-    if (row == 0u || row == 23u || col == 0u || col == 31u) {
-        return ATTR(1, 3, 7);          /* frame: bright magenta, white ink    */
-    }
-    if (!bg_pattern) {
-        blue = (u8)((row + col) & 1u);
-    } else if (bg_pattern == BG_GRID) {
-        blue = (u8)(((row & 3u) == 0u) || ((col & 3u) == 0u));
-    } else {
-        blue = (u8)(((u8)(row + col) >> 1) & 1u);
-    }
-    return ATTR(0, blue, 7);           /* black/dark-blue paper, white ink    */
-}
-
-/* Paint the whole arena into BOTH attribute blocks (identical on both screens,
- * so the page-flip never disturbs colour). */
-static void bg_paint(void)
-{
-    u8 *a = (u8 *)SCLD_ATTRS_A;
-    u8 *b = (u8 *)SCLD_ATTRS_B;
-    u8  row, col;
-    u16 i = 0;
-    for (row = 0; row < 24u; row++) {
-        for (col = 0; col < 32u; col++, i++) {
-            u8 v = bg_attr(row, col);
-            a[i] = v;
-            b[i] = v;
-        }
-    }
-}
-
-/* ---- enemy-hit explosions: brief colour pops, NO game freeze ----
- * A small pool of timed attribute bursts. An enemy death spawns one at its cell;
- * each frame fx_render() repaints the 3x3 burst (white->yellow->red) and, when it
- * expires, restores those cells to the background. Cheap (a handful of cells). */
-#define MAX_FX     6u
-#define FX_FRAMES  6u
-typedef struct { u8 cx, cy, t, shape; } fx_t;   /* shape: 0 full / 1 plus / 2 X */
-static fx_t fx[MAX_FX];
-
-static void fx_clear(void)
-{
-    u8 i;
-    for (i = 0; i < MAX_FX; i++) fx[i].t = 0u;
-}
-
-static void fx_spawn(u8 x, u8 y)
-{
-    u8 i;
-    for (i = 0; i < MAX_FX; i++) {
-        if (fx[i].t == 0u) {
-            u8 s = (u8)(rng_byte() & 3u);     /* random shape (3->0) */
-            fx[i].cx    = (u8)(x >> 3);
-            fx[i].cy    = (u8)(y >> 3);
-            fx[i].t     = FX_FRAMES;
-            fx[i].shape = (u8)((s == 3u) ? 0u : s);
-            return;
-        }
-    }
-}
-
-static u8 fx_colour(u8 t)
-{
-    if (t >= 5u) return ATTR(1, 7, 0);   /* white  */
-    if (t >= 3u) return ATTR(1, 6, 0);   /* yellow */
-    return ATTR(1, 2, 0);                /* red    */
-}
-
-static u8 fx_render(void)
-{
-    fx_t *f = fx;
-    u8 any = 0u;
-    u8 i;
-    for (i = MAX_FX; i != 0u; i--, f++) {
-        u8 colr, restore, shape, cx, cy, t;
-        s8 dr, dc;
-        t = f->t;
-        if (t == 0u) {
-            continue;
-        }
-        any = 1u;
-        t--;
-        f->t = t;
-        restore = (u8)(t == 0u);                /* last frame -> restore bg */
-        colr    = fx_colour((u8)(t + 1u));
-        shape   = f->shape;
-        cx      = f->cx;
-        cy      = f->cy;
-        for (dr = -1; dr <= 1; dr++) {
-            s8 row = (s8)cy + dr;
-            if (row < 0 || row > 23) continue;
-            for (dc = -1; dc <= 1; dc++) {
-                s8 c = (s8)cx + dc;
-                u8 keep;
-                if (c < 0 || c > 31) continue;
-                if (shape == 1u) {
-                    keep = (u8)(dr == 0 || dc == 0);                 /* plus  */
-                } else if (shape == 2u) {
-                    keep = (u8)((dr == 0 && dc == 0) || (dr != 0 && dc != 0)); /* X */
-                } else {
-                    keep = 1u;                                       /* full  */
-                }
-                if (!keep) {
-                    continue;
-                }
-                put_attr((u8)row, (u8)c,
-                         restore ? bg_attr((u8)row, (u8)c) : colr);
-            }
-        }
-    }
-    return any;
-}
-
 static u8 enemies_alive_count(const enemies_t *es)
 {
     const enemy_t *e = es->e;
@@ -274,110 +131,6 @@ static u8 enemies_alive_count(const enemies_t *es)
         }
     }
     return n;
-}
-
-/*
- * Death animation: a fast attribute KABOOM. The scene freezes on the displayed
- * buffer; one of three random styles plays, painting only the cells it needs
- * (cheap/snappy). Caller restores the arena afterwards (hud_paint_background).
- */
-/* Paint one attribute cell of ONE attribute block (clipped). The death explosion
- * is a frozen scene (no page-flip), so it draws into only the displayed block --
- * half the writes of put_attr(), which touches both. Caller passes the shown
- * attribute base (scld_shown_attrs()). */
-static void put_cell(u16 atbase, s8 col, s8 row, u8 v)
-{
-    if (col >= 0 && col < 32 && row >= 0 && row < 24) {
-        ((u8 *)(uintptr_t)atbase)[(u16)row * 32u + (u16)col] = v;
-    }
-}
-
-/*
- * Death animation: a single GROWING FIREBALL. A lumpy ball of fire expands from
- * the player's cell -- white-hot core, yellow glow, red shock edge -- with a
- * per-cell random jitter on the boundary, so it builds a different shape every
- * death (plus a random max size). Scene freezes; caller restores the arena.
- */
-static void death_anim(u8 px, u8 py)
-{
-    s8  cx   = (s8)(px >> 3);
-    s8  cy   = (s8)(py >> 3);
-    u8  seed = rng_byte();
-    u8  maxR = (u8)(7u + (rng_byte() & 3u));        /* random size 7..10 */
-    u16 sat  = scld_shown_attrs();                  /* draw into the shown block only */
-    u8  f;
-
-    for (f = 1u; f <= maxR; f++) {
-        s8 lim = (s8)(f + 1);
-        s8 dy, dx;
-        for (dy = (s8)-lim; dy <= lim; dy++) {
-            s8 row = (s8)(cy + dy);
-            u8 ady;
-            if (row < 0 || row > 23) continue;
-            ady = (u8)(dy < 0 ? -dy : dy);
-            for (dx = (s8)-lim; dx <= lim; dx++) {
-                s8 col = (s8)(cx + dx);
-                u8 adx, d, jit, fd, v;
-                if (col < 0 || col > 31) continue;
-                adx = (u8)(dx < 0 ? -dx : dx);
-                d   = (u8)(adx > ady ? adx : ady);              /* blocky radius   */
-                /* per-cell stable noise pushes the cell "outward" -> the WHOLE
-                 * ball is lumpy (core + bands + edge), not a clean square.
-                 * (adx*7 + ady*13) done with shifts+adds -- no sdcc multiply in
-                 * this per-cell hot loop. */
-                jit = (u8)(((u8)(((adx << 3) - adx)
-                                 + ((ady << 3) + (ady << 2) + ady)) ^ seed) & 3u);
-                fd  = (u8)(d + jit);
-                if (fd > f) {
-                    continue;                                   /* outside the ball */
-                }
-                if      (fd <= (u8)(f >> 1)) v = ATTR(1, 7, 0); /* white-hot core  */
-                else if (fd <= (u8)(f - 1u)) v = ATTR(1, 6, 0); /* yellow glow     */
-                else                         v = ATTR(1, 2, 0); /* red shock edge  */
-                put_cell(sat, col, row, v);
-            }
-        }
-        /* Death explosion sound, SYNCED with the growing fireball: the scene is
-         * frozen here (only the fireball attrs draw) so the frame budget is free
-         * -- a loud crackle every expansion frame. */
-        sfx_noise();
-        sfx_noise();
-        z80_outp(0xFEu, (f & 1u) ? BORDER_RED : BORDER_BLACK);
-        scld_wait();                                            /* music ticks from the IM2 ISR */
-        if (f >= (u8)(maxR - 1u)) {
-            z80_outp(0xFEu, (f & 1u) ? BORDER_BLACK : BORDER_RED);
-            scld_wait();                                        /* brief hold full */
-        }
-    }
-    z80_outp(0xFEu, BORDER_BLACK);
-}
-
-/* ---- spawn telegraph: one quick warning blink where the next wave appears ----
- * Enemies are inert/invisible for this short warning, then pop in. */
-#define TELEGRAPH_FRAMES 16u
-
-static void telegraph_blink(const enemies_t *es, u8 tk)
-{
-    const enemy_t *e = es->e;
-    u8 i, on = (u8)((tk & 8u) != 0u);    /* toggle every 8 frames */
-    for (i = MAX_ENEMIES; i != 0u; i--, e++) {
-        if (e->alive) {
-            u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-            put_attr(row, col, on ? ATTR(0, 2, 7) : bg_attr(row, col));  /* soft red */
-        }
-    }
-}
-
-static void telegraph_clear(const enemies_t *es)
-{
-    const enemy_t *e = es->e;
-    u8 i;
-    for (i = MAX_ENEMIES; i != 0u; i--, e++) {
-        if (e->alive) {
-            u8 row = (u8)(e->y >> 3), col = (u8)(e->x >> 3);
-            put_attr(row, col, bg_attr(row, col));
-        }
-    }
 }
 
 /* The top-border lives/shields HUD now lives in hud.c
@@ -729,7 +482,7 @@ main_menu:
     scld_clear(SCLD_SCREEN_A);        /* wipe the title text off both buffers   */
     scld_clear(SCLD_SCREEN_B);
     game_new(&g);                     /* wave 1, score 0, START_LIVES/SHIELDS   */
-    if (++bg_pattern >= 3u) bg_pattern = BG_CHECKER;
+    bg_next_pattern();
     bg_paint();                       /* floor + frame into both attr blocks    */
     hud_score(&g.score, 1u);          /* full score draw after the clear        */
 
@@ -750,7 +503,7 @@ main_menu:
     recoil_dx = 0;
     recoil_dy = 0;
     boost_was_down = 0u;
-    border_flash = 0u;
+    border_reset();
     hud_invalidate();                 /* force first widget paint               */
     hud_draw_lives(g.lives);
     hud_draw_shields(g.shields);
