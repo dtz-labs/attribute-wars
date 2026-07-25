@@ -8,6 +8,7 @@
  */
 
 #include "scld.h"
+#include "scld_geom.h"  /* scld_scanline / scld_next_scanline */
 
 #include <stdint.h>
 #include <stdio.h>

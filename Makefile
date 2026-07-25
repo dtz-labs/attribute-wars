@@ -53,7 +53,7 @@ LOADING_SCREEN := assets/loading.scr
 
 COMMON_C := \
 	src/main.c src/scld.c src/sprite.c src/sprites.c src/sprite_art.c \
-	src/background.c src/fx.c \
+	src/background.c src/fx.c src/text.c src/title.c src/gameover.c \
 	src/player.c src/bullet.c src/enemy.c src/collision.c src/geometry.c \
 	src/input.c src/rng.c src/score.c src/sfx.c src/hud.c src/music.c
 

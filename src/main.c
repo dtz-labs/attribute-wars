@@ -43,11 +43,11 @@
 #include "score.h"
 #include "sfx.h"           /* sfx_play + SFX_* ids (shoot/explode/hit/death/...) */
 #include "music.h"         /* title-selected beeper / AY music+FX / AY FX       */
-#include "hud.h"           /* ATTR macro, put_attr, score_cell_attr, HUD widgets */
+#include "hud.h"           /* HUD widgets: lives, shields, timer, score         */
+#include "title.h"         /* title screen + control/sound menus                */
+#include "gameover.h"      /* GAME OVER screen + GAME_OVER_* choices            */
 #include "types.h"
 #include <z80.h>          /* z80_outp() for the ULA border */
-#include <string.h>       /* memset (game-over fills) */
-#include <input.h>        /* in_key_pressed + IN_KEY_SCANCODE_* (title/game-over) */
 
 #ifdef ZX128_PAGE_FLIP
 extern void zx128_load_tune(void);  /* pull the PT3 tune into bank 4 (zx128_page.asm) */
@@ -64,12 +64,6 @@ extern void zx128_load_tune(void);  /* pull the PT3 tune into bank 4 (zx128_page
 #define PLAYER_START_X 128u
 #define PLAYER_START_Y 96u
 
-#ifdef ZX_SINCLAIR_DUAL_STICK
-#define CTRL_DUAL_LABEL "3 SIN JOY"
-#else
-#define CTRL_DUAL_LABEL "3 TWO JOYSTICKS (TS2068)"
-#endif
-
 /* Visual recoil (spec §3.5): how many frames the ship draws kicked-back. */
 #define RECOIL_FRAMES 3u
 #define RECOIL_PIXELS 2u
@@ -78,17 +72,6 @@ extern void zx128_load_tune(void);  /* pull the PT3 tune into bank 4 (zx128_page
  * at the wave-16 settings for anything >16, so this is only an anti-wrap guard
  * (a player reaching ~200 endless waves never needs the counter to overflow). */
 #define WAVE_MAX 200u
-
-#define AW_STR_1(x) #x
-#define AW_STR(x) AW_STR_1(x)
-
-#if !defined(APP_VERSION_STR) && defined(APP_VERSION_MAJOR) && defined(APP_VERSION_MINOR) && defined(APP_VERSION_PATCH)
-#define APP_VERSION_STR AW_STR(APP_VERSION_MAJOR) "." AW_STR(APP_VERSION_MINOR) "." AW_STR(APP_VERSION_PATCH)
-#elif !defined(APP_VERSION_STR) && defined(APP_VERSION_MAJOR) && defined(APP_VERSION_MINOR)
-#define APP_VERSION_STR AW_STR(APP_VERSION_MAJOR) "." AW_STR(APP_VERSION_MINOR)
-#elif !defined(APP_VERSION_STR)
-#define APP_VERSION_STR "dev"
-#endif
 
 #define KIND_SPRITE 0u   /* full 8x8 sprite (player, enemy) */
 #define KIND_BULLET 1u   /* cheap 3x3 dot                   */
@@ -135,290 +118,6 @@ static u8 enemies_alive_count(const enemies_t *es)
 
 /* The top-border lives/shields HUD now lives in hud.c
  * (hud_draw_lives / hud_draw_shields). */
-
-/* Whole-screen red/white flash on GAME OVER, with the ULA border in sync. */
-static void game_over_flash(void)
-{
-    u8 k, d;
-    for (k = 0; k < 8u; k++) {
-        u8 v = (k & 1u) ? ATTR(1, 2, 0) : ATTR(1, 7, 0);
-        z80_outp(0xFEu, (k & 1u) ? BORDER_RED : 7u);
-        memset((u8 *)SCLD_ATTRS_A, v, SCLD_ATTRS_LEN);
-        memset((u8 *)SCLD_ATTRS_B, v, SCLD_ATTRS_LEN);
-        d = 6;
-        while (d--) scld_wait();        /* music ticks from the IM2 ISR */
-    }
-    z80_outp(0xFEu, BORDER_BLACK);
-}
-
-/* ---- title screen: game name, control-scheme menu, copyright ----
- * Text is blitted from the 8x8 ROM character set (CHARS = 0x3C00 + code*8) into
- * screen A's bitmap. Only screen A is shown here (no page-flip), so one static
- * text draw plus a few per-frame attribute-row highlights is the whole cost.
- */
-static void put_char(u16 base, u8 col, u8 row, u8 ch)
-{
-    const u8 *g = (const u8 *)(uintptr_t)(0x3C00u + (u16)ch * 8u);
-    u8 r;
-    for (r = 0; r < 8u; r++) {
-        scld_scanline(base, (u8)((u16)row * 8u + r))[col] = g[r];
-    }
-}
-
-static void put_text(u16 base, u8 col, u8 row, const char *s)
-{
-    while (*s != '\0') {
-        put_char(base, col, row, (u8)*s);
-        col++;
-        s++;
-    }
-}
-
-/* Render the 6 BCD score digits left-to-right at (col,row) of BOTH bitmaps. */
-static void put_score_digits(u8 col, u8 row, const score_t *s)
-{
-    u8 i;
-    for (i = 0; i < 6u; i++) {
-        u8 ch = (u8)('0' + s->digits[i]);
-        put_char(SCLD_SCREEN_A, (u8)(col + i), row, ch);
-        put_char(SCLD_SCREEN_B, (u8)(col + i), row, ch);
-    }
-}
-
-/* HUD score at (col 1, row 23), redrawing ONLY the digits that changed since the
- * last call (cache) -- so a per-shot -5 doesn't repaint all six glyphs every
- * shot. Pass force=1 after a scld_clear wiped the score bitmap (init/respawn). */
-static u8 g_score_cache[6] = { 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu, 0xFFu };
-
-static void hud_score(const score_t *s, u8 force)
-{
-    u8 i;
-    for (i = 0; i < 6u; i++) {
-        if (force || s->digits[i] != g_score_cache[i]) {
-            g_score_cache[i] = s->digits[i];
-            put_char(SCLD_SCREEN_A, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
-            put_char(SCLD_SCREEN_B, (u8)(1u + i), 23u, (u8)('0' + s->digits[i]));
-        }
-    }
-}
-
-/* Render a u8 (0..255) as up to 3 right-aligned decimal chars into BOTH bitmaps.
- * Only /10 and /100 on a small u8 — cheap, no runtime-value division. */
-static void put_u8(u8 col, u8 row, u8 v)
-{
-    u8 h = (u8)(v / 100u);
-    u8 t = (u8)((v / 10u) % 10u);
-    u8 o = (u8)(v % 10u);
-    if (h) {
-        put_char(SCLD_SCREEN_A, col, row, (u8)('0' + h));
-        put_char(SCLD_SCREEN_B, col, row, (u8)('0' + h));
-    }
-    if (h || t) {
-        put_char(SCLD_SCREEN_A, (u8)(col + 1), row, (u8)('0' + t));
-        put_char(SCLD_SCREEN_B, (u8)(col + 1), row, (u8)('0' + t));
-    }
-    put_char(SCLD_SCREEN_A, (u8)(col + 2), row, (u8)('0' + o));
-    put_char(SCLD_SCREEN_B, (u8)(col + 2), row, (u8)('0' + o));
-}
-
-/* put_text into BOTH bitmaps (so the page-flip's current page shows it). */
-static void put_text_both(u8 col, u8 row, const char *s)
-{
-    put_text(SCLD_SCREEN_A, col, row, s);
-    put_text(SCLD_SCREEN_B, col, row, s);
-}
-
-/*
- * GAME OVER screen (spec §7). Flashes, then shows the final score + the wave the
- * player died on, and waits for a choice:
- *   FIRE / SPACE -> resume from the death wave  (returns 0)
- *   Q            -> fresh game from wave 1       (returns 1)
- *   ENTER        -> return to the title menu     (returns 2)
- * Drawn into BOTH bitmaps + both attribute blocks, so it reads regardless of
- * which page the last page-flip left visible (we don't flip while waiting).
- * Caller does the game_state reset + re-init.
- */
-static u8 game_over_screen(const game_state_t *g, u8 death_wave)
-{
-    game_over_flash();
-
-    scld_clear(SCLD_SCREEN_A);
-    scld_clear(SCLD_SCREEN_B);
-    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
-    memset((u8 *)SCLD_ATTRS_B, ATTR(0, 0, 7), SCLD_ATTRS_LEN);
-
-    put_text_both(11,  6, "GAME OVER");
-    put_text_both( 7, 10, "SCORE");
-    put_score_digits(13, 10, &g->score);
-    put_text_both( 7, 12, "WAVE");
-    put_u8(13, 12, death_wave);
-    put_text_both( 3, 17, "FIRE/SPACE  RESUME WAVE");
-    put_u8(27, 17, death_wave);
-    put_text_both( 3, 19, "Q           NEW GAME");
-    put_text_both( 3, 21, "ENTER       MAIN MENU");
-
-    for (;;) {
-        intent_t in;
-        input_read(DIR_NONE, &in);    /* scheme-agnostic read */
-        /* CONTINUE on the FIRE button or SPACE. In the twin-stick schemes the
-         * FIRE button maps to BOOST (scheme A/C) or fire-in-heading (scheme B),
-         * so accept either intent here, plus SPACE directly. */
-        if (in.boost || in.fire || in_key_pressed(IN_KEY_SCANCODE_SPACE)) {
-            return 0u;                 /* resume from the death wave, score 0 */
-        }
-        if (in_key_pressed(IN_KEY_SCANCODE_q)) {
-            return 1u;                 /* fresh game */
-        }
-        if (in_key_pressed(IN_KEY_SCANCODE_ENTER)) {
-            return 2u;                 /* title menu */
-        }
-        scld_wait();                   /* music continues from the IM2 ISR */
-    }
-}
-
-/* Fill one 32-cell attribute row of screen A (title highlights). */
-static void title_attr_row(u8 row, u8 v)
-{
-    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)row * 32u;
-    u8  c;
-    for (c = 0; c < 32u; c++) {
-        a[c] = v;
-    }
-}
-
-/* ---- title shine-sweep ----------------------------------------------------
- * A one-cell glint walks across each title/menu/credit text row in sequence,
- * then pauses briefly before restarting at "ATTRIBUTE WARS". Attribute writes
- * are title-screen-only, so clarity beats micro-optimising the small row table.
- */
-#ifndef ZX128_PAGE_FLIP
-#define SHINE_ROWS   15u
-#define SHINE_PAUSE  40u
-
-static const u8 shine_row[SHINE_ROWS] = {
-     3u,  4u,  7u,  8u,  9u, 10u, 12u, 13u, 14u, 15u, 16u, 18u, 20u, 22u, 23u
-};
-static const u8 shine_col0[SHINE_ROWS] = {
-     9u,  5u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  2u,  5u,  0u,  8u
-};
-static const u8 shine_col1[SHINE_ROWS] = {
-    22u, 26u,  9u, 27u, 27u, 25u,  6u,  9u, 11u,  5u, 21u, 13u, 25u, 31u, 22u
-};
-#endif
-
-static void title_base_attrs(u8 sel, u8 snd)
-{
-    title_attr_row( 3, ATTR(1, 0, 5));      /* title: bright cyan */
-    title_attr_row( 4, ATTR(1, 0, 5));      /* version */
-    title_attr_row( 7, ATTR(1, 0, 5));      /* CONTROLS heading */
-    title_attr_row( 8, (sel == CTRL_KEMPSTON_MOVE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-    title_attr_row( 9, (sel == CTRL_KEMPSTON_FIRE) ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-    title_attr_row(10, (sel == CTRL_DUAL_STICK)    ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-    title_attr_row(12, ATTR(1, 0, 5));      /* SOUND heading */
-    title_attr_row(13, (snd == SOUND_BEEPER)       ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-    title_attr_row(14, (snd == SOUND_MUSIC_FX)     ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-    title_attr_row(15, (snd == SOUND_FX)           ? ATTR(1, 0, 6) : ATTR(0, 0, 7));
-    title_attr_row(16, ATTR(0, 0, 5));      /* detected machine / AY */
-    title_attr_row(18, ATTR(1, 0, 4));      /* START */
-    title_attr_row(20, ATTR(0, 0, 7));
-    title_attr_row(22, ATTR(0, 0, 7));
-    title_attr_row(23, ATTR(0, 0, 7));
-}
-
-#ifndef ZX128_PAGE_FLIP
-static void title_shine(u8 row_idx, u8 col)
-{
-    u8 *a = (u8 *)SCLD_ATTRS_A + (u16)shine_row[row_idx] * 32u;
-    if (col >= shine_col0[row_idx] && col <= shine_col1[row_idx]) {
-        a[col] = ATTR(1, 0, 7);            /* bright white glint */
-    }
-    if (col > shine_col0[row_idx]) {
-        a[(u8)(col - 1u)] = ATTR(1, 0, 6); /* yellow trail */
-    }
-}
-#endif
-
-/* Draw the menu, poll keys 1/2/3 (controls), 4/5/6 (sound), and 0 (start).
- * AY setup is still deferred on the first title screen; if music is already
- * playing, selecting BEEPER or FX stops just the tune immediately. */
-static void title_screen(u8 *ctrl_out, u8 *sound_out, u8 initial_sound)
-{
-    u8 sel = CTRL_KEMPSTON_MOVE;
-    u8 snd = initial_sound;
-#ifndef ZX128_PAGE_FLIP
-    u8 shine_i = 0u;
-    u8 shine_c = shine_col0[0];
-    u8 pause = 0u;
-#endif
-
-    scld_show_a();
-    scld_clear(SCLD_SCREEN_A);
-    memset((u8 *)SCLD_ATTRS_A, ATTR(0, 0, 7), SCLD_ATTRS_LEN);   /* white on black */
-
-    put_text(SCLD_SCREEN_A,  9,  3, "ATTRIBUTE WARS");
-    put_text(SCLD_SCREEN_A,  5,  4, "version " APP_VERSION_STR);
-    put_text(SCLD_SCREEN_A,  2,  7, "CONTROLS");
-    put_text(SCLD_SCREEN_A,  2,  8, "1 KEMPSTON MOVE  KEYS FIRE");
-    put_text(SCLD_SCREEN_A,  2,  9, "2 KEYS MOVE  KEMPSTON FIRE");
-    put_text(SCLD_SCREEN_A,  2, 10, CTRL_DUAL_LABEL);
-    put_text(SCLD_SCREEN_A,  2, 12, "SOUND");
-    put_text(SCLD_SCREEN_A,  2, 13, "4 BEEPER");
-    put_text(SCLD_SCREEN_A,  2, 14, "5 MUSIC+FX");
-    put_text(SCLD_SCREEN_A,  2, 15, "6 FX");
-    put_text(SCLD_SCREEN_A,  2, 16, music_status_text());
-    put_text(SCLD_SCREEN_A,  2, 18, "0 START GAME");
-    put_text(SCLD_SCREEN_A,  5, 20, "\x7F 2026 Claude & Codex");
-    put_text(SCLD_SCREEN_A,  0, 22, "human in the loop: @mpasternak79");
-    put_text(SCLD_SCREEN_A,  8, 23, "music: @paatorr");
-
-    title_base_attrs(sel, snd);
-
-    for (;;) {
-        title_base_attrs(sel, snd);
-#ifndef ZX128_PAGE_FLIP
-        title_shine(shine_i, shine_c);
-
-        if (pause > 0u) {
-            pause--;
-            if (pause == 0u) {
-                shine_i = 0u;
-                shine_c = shine_col0[0];
-            }
-        } else {
-            if (shine_c < shine_col1[shine_i]) {
-                shine_c++;
-            } else if (shine_i < (SHINE_ROWS - 1u)) {
-                shine_i++;
-                shine_c = shine_col0[shine_i];
-            } else {
-                pause = SHINE_PAUSE;
-            }
-        }
-#endif
-
-        if      (in_key_pressed(IN_KEY_SCANCODE_1)) sel = CTRL_KEMPSTON_MOVE;
-        else if (in_key_pressed(IN_KEY_SCANCODE_2)) sel = CTRL_KEMPSTON_FIRE;
-        else if (in_key_pressed(IN_KEY_SCANCODE_3)) sel = CTRL_DUAL_STICK;
-        else if (in_key_pressed(IN_KEY_SCANCODE_4)) {
-            snd = SOUND_BEEPER;
-            if (music_is_playing()) {
-                music_init(SOUND_BEEPER);
-            }
-        }
-        else if (in_key_pressed(IN_KEY_SCANCODE_5)) snd = SOUND_MUSIC_FX;
-        else if (in_key_pressed(IN_KEY_SCANCODE_6)) {
-            snd = SOUND_FX;
-            if (music_is_playing()) {
-                music_init(SOUND_FX);
-            }
-        }
-        else if (in_key_pressed(IN_KEY_SCANCODE_0)) break;
-
-        scld_wait();
-    }
-    *ctrl_out = sel;
-    *sound_out = snd;
-}
 
 int main(void)
 {
@@ -484,7 +183,7 @@ main_menu:
     game_new(&g);                     /* wave 1, score 0, START_LIVES/SHIELDS   */
     bg_next_pattern();
     bg_paint();                       /* floor + frame into both attr blocks    */
-    hud_score(&g.score, 1u);          /* full score draw after the clear        */
+    hud_draw_score(&g.score, 1u);          /* full score draw after the clear        */
 
     player_init(&player, PLAYER_START_X, PLAYER_START_Y);
     bullets_init(&bullets);
@@ -555,7 +254,7 @@ main_menu:
                 cooldown = FIRE_COOLDOWN;
                 /* economy + sound + recoil — only on a real shot (spec §3.5/§4/§8) */
                 score_sub(&g.score, 5u);
-                hud_score(&g.score, 0u);
+                hud_draw_score(&g.score, 0u);
                 sfx_play(SFX_SHOOT);             /* ~1ms click, safe in-loop      */
                 recoil_timer = RECOIL_FRAMES;    /* kick the ship back ~2 frames  */
                 recoil_dx    = in.aim_dx;        /* store aim for the draw offset */
@@ -662,7 +361,7 @@ main_menu:
                             }
                         }
                         if (scored) {
-                            hud_score(&g.score, 0u);           /* points landed   */
+                            hud_draw_score(&g.score, 0u);           /* points landed   */
                             border_flash_red();
                         }
                     }
@@ -681,7 +380,7 @@ main_menu:
                     }
                     sfx_play(SFX_BONUS);          /* longer tone; we're between
                                                    * waves so blocking is fine    */
-                    hud_score(&g.score, 0u);
+                    hud_draw_score(&g.score, 0u);
                 }
                 /* advance the difficulty index (capped so the u8 never wraps) */
                 if (g.wave < (u8)WAVE_MAX) {
@@ -701,7 +400,7 @@ main_menu:
                     g.shields--;
                     score_sub(&g.score, 10u);
                     sfx_play(SFX_HIT);               /* short, in-loop            */
-                    hud_score(&g.score, 0u);
+                    hud_draw_score(&g.score, 0u);
                     invuln = INVULN_FRAMES;
                     hud_draw_shields(g.shields);
                 } else {
@@ -718,9 +417,9 @@ main_menu:
                          * FIRE/SPACE resume, Q fresh game, ENTER title menu. ---- */
                         u8 death_wave = g.wave;
                         u8 over = game_over_screen(&g, death_wave);
-                        if (over == 0u) {
+                        if (over == GAME_OVER_RESUME) {
                             game_resume_from_wave(&g, death_wave);  /* score 0, keep wave */
-                        } else if (over == 1u) {
+                        } else if (over == GAME_OVER_NEW_GAME) {
                             game_new(&g);                            /* wave 1     */
                         } else {
                             goto main_menu;
@@ -731,7 +430,7 @@ main_menu:
                     scld_clear(SCLD_SCREEN_A);        /* wipe the death-anim AND the */
                     scld_clear(SCLD_SCREEN_B);        /* GAME OVER text off both pages */
                     bg_paint();                       /* repaint floor + frame      */
-                    hud_score(&g.score, 1u);          /* full score after the clear */
+                    hud_draw_score(&g.score, 1u);          /* full score after the clear */
                     fx_clear();
                     prevn[0] = 0; prevn[1] = 0;
                     player_init(&player, PLAYER_START_X, PLAYER_START_Y);

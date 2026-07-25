@@ -13,6 +13,7 @@
  * No HALT/EI here -- pure compute, measured directly.
  */
 #include "scld.h"
+#include "scld_geom.h"  /* scld_scanline / scld_next_scanline */
 #include "sprite.h"
 #include "sprites.h"
 #include "enemy.h"
