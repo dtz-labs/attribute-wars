@@ -9,7 +9,7 @@ endif
 
 ROOT := $(CURDIR)
 BUILD := build
-VERSION ?= 1.2.0
+VERSION ?= 1.2.1
 VERSION_WORDS := $(subst ., ,$(VERSION))
 VERSION_MAJOR := $(word 1,$(VERSION_WORDS))
 VERSION_MINOR := $(word 2,$(VERSION_WORDS))

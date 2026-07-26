@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.1] - 2026-07-26
 
 ### Fixed
 - The zx128 build no longer probes for the AY: page-flipping through `$7FFD`
