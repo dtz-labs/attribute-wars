@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/dtz-labs/attribute-wars/actions/workflows/ci.yml/badge.svg)](https://github.com/dtz-labs/attribute-wars/actions/workflows/ci.yml)
 
-![Attribute Wars loading screen](assets/loading.png)
+[![Attribute Wars loading screen](assets/loading.png)](https://dtz-labs.github.io/attribute-wars/)
 
 **Attribute Wars** is available from:
 https://github.com/dtz-labs/attribute-wars/releases
