@@ -136,6 +136,18 @@ _ay_set_ports_std:
 ; already proved a 2068. The standard AY probe is gated behind "not Timex SCLD",
 ; so ZEsarUX's TC2048 false-positive cannot select MUSIC+FX by default.
 _ay_default_sound:
+        IFDEF   ZX128_PAGE_FLIP
+        ; The zx128 build banks the shadow screen and the tune through $7FFD,
+        ; so it can only ever run on a 128K-class machine: its AY is a build
+        ; invariant, not something to probe. This matters beyond tidiness --
+        ; JSSpeccy 3 stores AY register writes unmasked, so reading R1 back
+        ; yields $FF instead of a real chip's $0F, and ay_probe would wrongly
+        ; fall back to BEEPER in the browser player.
+        call    _ay_set_ports_std
+        ld      a,1                     ; SOUND_MUSIC_FX
+        ld      l,a
+        ret
+        ELSE
         call    _ay_detect              ; 2068? latches 0xF5/0xF6, returns A/L=1
         or      a
         jr      nz,ads_music
@@ -154,6 +166,7 @@ ads_beeper:
         xor     a                       ; SOUND_BEEPER
         ld      l,a
         ret
+        ENDIF
 
 ; u8 ay_machine_status(void) -- packed title-screen hardware status:
 ;   low nibble  = machine: 0 ZX48, 1 ZX128, 2 TC2048, 3 TC2068/TS2068
@@ -161,6 +174,14 @@ ads_beeper:
 ; This follows the same conservative rules as _ay_default_sound: never probe
 ; 0xFFFD on a TC2048 because ZEsarUX can false-positive there.
 _ay_machine_status:
+        IFDEF   ZX128_PAGE_FLIP
+        ; See _ay_default_sound: the zx128 build implies a 128K with its
+        ; standard AY, and probing would misreport under JSSpeccy 3.
+        call    _ay_set_ports_std
+        ld      a,0x11                  ; machine=1, AY=1
+        ld      l,a
+        ret
+        ELSE
         call    _ay_detect              ; ROM-confirmed 2068?
         or      a
         jr      z,ams_not_2068
@@ -186,6 +207,7 @@ ams_zx48:
         xor     a                       ; machine=0, AY=0
         ld      l,a
         ret
+        ENDIF
 
 ; scld_present_p -- A=1 if a Timex SCLD answers port 0xFF (it returns the last
 ; byte written; a 48K/128K floats). Writes only 0x01/0x00 (bits 6-7 stay 0) and

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- The zx128 build no longer probes for the AY: page-flipping through `$7FFD`
+  already guarantees a 128K-class machine, and the readback probe misfired in
+  JSSpeccy 3 (it stores AY registers unmasked, so R1 read back `$FF` instead
+  of a real chip's `$0F`), silently defaulting the browser player to BEEPER.
+  MUSIC+FX with the standard ports is now the build's default.
+
 ### Added
 - Play-in-browser page: every push to `main` deploys the current 128K TAP to
   GitHub Pages, embedded in the vendored JSSpeccy 3 emulator (`site/`,
