@@ -4,8 +4,9 @@
 #
 # On `git commit`, hooks run ONLY on the staged files -- they won't touch
 # unrelated work. The text hooks auto-skip binary files, and we additionally
-# exclude the binary AY tune below.
-exclude: '\.(pt3|tap|tzx|sna|z80|bin)$'
+# exclude the binary AY tune below and the verbatim-vendored JSSpeccy 3
+# distribution (same rule as pt3prom.asm: do not reformat vendored code).
+exclude: '\.(pt3|tap|tzx|sna|z80|bin)$|^site/jsspeccy/'
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

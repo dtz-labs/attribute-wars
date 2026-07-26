@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Play-in-browser page: every push to `main` deploys the current 128K TAP to
+  GitHub Pages, embedded in the vendored JSSpeccy 3 emulator (`site/`,
+  `.github/workflows/pages.yml`), linked from the README. The page carries a
+  BuyMeACoffee sponsor button.
+
 ## [1.2.0] - 2026-06-24
 
 ### Added

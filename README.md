@@ -28,14 +28,12 @@ Load the TAP file that matches your machine or emulator.
 
 ## Play In Browser
 
-GitHub READMEs cannot embed the JSSpeccy 3 JavaScript emulator directly, but
-you can play the Spectrum builds in a browser:
-
-1. Open [JSSpeccy 3](https://jsspeccy.zxdemo.org/).
-2. Download the latest TAP bundle from the
-   [GitHub Releases page](https://github.com/dtz-labs/attribute-wars/releases).
-3. In JSSpeccy 3, open the ZIP and select `aw-*-zx48k.tap` or
-   `aw-*-zx128k.tap`.
+**[▶ Play the latest build in your browser](https://dtz-labs.github.io/attribute-wars/)** —
+every push to `main` deploys the current ZX Spectrum 128K TAP to GitHub Pages,
+where it runs in the embedded
+[JSSpeccy 3](https://github.com/gasman/jsspeccy3) emulator with the PT3
+soundtrack and AY effects. Click the emulator display once to give it the
+keyboard and let the browser start the sound.
 
 Use `aw-*-timex.tap` in a Timex-capable emulator such as ZEsarUX.
 
