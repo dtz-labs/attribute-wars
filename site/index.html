@@ -45,8 +45,9 @@
 runs the latest ZX Spectrum <strong>128K</strong> TAP built from
 <a href="https://github.com/dtz-labs/attribute-wars">main</a>, so the PT3
 soundtrack and AY effects are audible.
-<span class="sound-hint">Click the display once — that gives it the keyboard
-and lets the browser start the sound.</span></p>
+<span class="sound-hint">Press the ▶ button on the display to start — the
+game boots with the PT3 soundtrack (browsers only allow audio after that
+click).</span></p>
 <p class="keys">Move — 5/6/7/8 (cursor) or Kempston pad &nbsp;&nbsp;
 Fire — 0, or aim with Q&nbsp;W&nbsp;E / A&nbsp;D / Z&nbsp;X&nbsp;C</p>
 <p><a class="sponsor" href="https://buymeacoffee.com/mpasternak">☕ Sponsor
@@ -64,7 +65,9 @@ JSSpeccy(document.getElementById('jsspeccy'), {
     machine: '128',
     openUrl: 'attribute-wars.tap',
     autoLoadTapes: true,
-    autoStart: true,
+    // No autoStart: JSSpeccy creates its AudioContext inside start(), and
+    // never calls resume() - starting via the visible play button keeps that
+    // inside a user gesture, which is the only way browsers allow audio.
     zoom: 2
 });
 </script>
