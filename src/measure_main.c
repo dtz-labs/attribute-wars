@@ -2,7 +2,7 @@
  * measure_main.c -- T-state measurement harness (NOT shipped in the game).
  *
  * Isolates the per-frame cost of LOGIC (enemies_update + collide + player_hit)
- * vs RENDER (erase 8 + draw 8 sprites + 2 bullets) at the 7-enemy steady state,
+ * vs RENDER (erase 9 + draw 9 sprites + 2 bullets) at the 8-enemy steady state,
  * so we optimise the real bottleneck instead of guessing.
  *
  * Marker functions (mark0/1/2) have a side effect (border OUT) so the optimiser
@@ -40,7 +40,7 @@ extern void pt3_init(void);
 extern void pt3_play_safe(void);
 
 /* Keep the pools full so no function triggers a respawn (which would pull in
- * rng and skew the numbers). 7 alive, 2 active -- the steady state. */
+ * rng and skew the numbers). MAX_ENEMIES alive, 2 active -- the steady state. */
 static void revive(enemies_t *es, bullets_t *bs)
 {
     u8 i;
@@ -85,8 +85,8 @@ int main(void)
     }
     markC();
     for (k = 0; k < ITERS; k++) {            /* ---- RENDER ---- */
-        for (i = 0; i < 8u; i++) {           /* erase last frame (8 sprites) */
-            SPR_ERASE(back, (u8)(16u + i * 28u), (u8)(40u + (i & 3u) * 30u));
+        for (i = 0; i < (1u + MAX_ENEMIES); i++) {  /* erase last frame (player + enemies) */
+            SPR_ERASE(back, (u8)(16u + i * 26u), (u8)(40u + (i & 3u) * 30u));
         }
         SPR_DRAW(back, 120, 96, ps_ship[2]); /* player */
         for (i = 0; i < MAX_ENEMIES; i++) {  /* enemies */

@@ -22,8 +22,8 @@ u8 boxes_overlap(u8 ax, u8 ay, u8 bx, u8 by)
  * collide.asm; this thin wrapper passes the pools via globals and returns the
  * hit count the asm leaves in cbe_kills. The C version stays compiled on the
  * host as the unit-tested reference (and what the asm was diffed against). */
-#if MAX_BULLETS != 2 || MAX_ENEMIES != 7
-#error "collide.asm hardcodes MAX_BULLETS==2 and MAX_ENEMIES==7; update both"
+#if MAX_BULLETS != 2 || MAX_ENEMIES != 8
+#error "collide.asm hardcodes MAX_BULLETS==2 and MAX_ENEMIES==8; update both"
 #endif
 bullets_t *cbe_bs;
 enemies_t *cbe_es;

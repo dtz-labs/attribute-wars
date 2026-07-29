@@ -10,7 +10,7 @@
 #include "types.h"
 #include "bullet.h"      /* enemies_update needs bullet positions (dodging) */
 
-#define MAX_ENEMIES 7      /* hard gameplay cap; keep asm loops in lockstep */
+#define MAX_ENEMIES 8      /* hard gameplay cap; keep asm loops in lockstep */
 #define ENEMY_SPEED 1        /* pixels per frame (<= player so they're evadable) */
 
 /* Behaviour levels. (1 is intentionally unused for now.) The three BOUNCE

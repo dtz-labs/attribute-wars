@@ -163,8 +163,9 @@ static void test_wave0_guard(void)
     check("wave0 spawns wave1 count (4)", alive == 4u);
 }
 
-/* ---- cap: late waves clamp to the 7-enemy gameplay limit ---- */
-static void test_spawn_wave16_cap7(void)
+/* ---- wave16 now fits exactly at the 8-enemy gameplay cap (no clamping
+ * needed since MAX_ENEMIES == wave_table[15].count == 8) ---- */
+static void test_spawn_wave16_full(void)
 {
     enemies_t es;
     u8 alive = 0u, nc = 0u, nh = 0u, i;
@@ -177,9 +178,9 @@ static void test_spawn_wave16_cap7(void)
             else if (es.e[i].level == ENEMY_HUNTER) nh++;
         }
     }
-    check("wave16 alive==7", alive == 7u);
+    check("wave16 alive==8", alive == 8u);
     check("wave16 n_chase==1", nc == 1u);
-    check("wave16 n_hunter==6", nh == 6u);
+    check("wave16 n_hunter==7", nh == 7u);
 }
 
 /* ---- in-bounds check over many waves ---- */
@@ -345,7 +346,7 @@ int main(void)
     test_pattern_no_repeat();
     test_wave_loop();
     test_wave0_guard();
-    test_spawn_wave16_cap7();
+    test_spawn_wave16_full();
     test_all_waves_in_bounds();
     test_axis_bouncer_cap();
     test_chaser_wound_jump();

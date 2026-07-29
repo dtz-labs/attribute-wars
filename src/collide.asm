@@ -61,7 +61,7 @@ do_bullet:
         ret     z                      ; free slot -> nothing to do
 
         ld      ix,(_cbe_es)           ; e[0]
-        ld      b,7                    ; MAX_ENEMIES (see C guard)
+        ld      b,8                    ; MAX_ENEMIES (see C guard)
         ld      c,1                    ; current enemy bit
         ld      de,6                   ; enemy stride (add ix,de keeps DE)
 db_inner:
