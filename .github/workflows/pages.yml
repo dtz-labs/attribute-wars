@@ -15,6 +15,12 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
+env:
+  # The dtz-labs fork of JSSpeccy 3 (Timex video modes, gamepad support);
+  # the pages deploy downloads this pinned release instead of vendoring a
+  # build into the repository.
+  JSSPECCY_RELEASE: v3.2.0-timex.2
+
 jobs:
   deploy:
     name: deploy browser player
@@ -25,12 +31,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Compile the ZX Spectrum 128K TAP with z88dk
+      - name: Compile every platform TAP with z88dk
         # Same pattern as ci.yml: the build runs inside the official z88dk
-        # image (which has no python3), the layout check runs on the host.
+        # image (which has no python3), the layout checks run on the host.
         run: >
           docker run --rm -v "$PWD":/src -w /src z88dk/z88dk:latest
-          make zx128 CHECK_ZX128_LAYOUT=:
+          make all CHECK_ZX128_LAYOUT=: CHECK_ZX_STACK_LAYOUT=:
+
+      - name: Validate ZX stack layout
+        run: |
+          set -eu
+          tools/check_zx_stack_layout.py build/*-timex.map
+          tools/check_zx_stack_layout.py build/*-zx48k.map
 
       - name: Validate ZX128 memory layout
         run: |
@@ -39,14 +51,41 @@ jobs:
           test "${#map_files[@]}" -eq 1
           tools/check_zx128_layout.py "${map_files[0]}"
 
+      - name: Download the emulator build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p _emulator
+          gh release download "$JSSPECCY_RELEASE" \
+            --repo dtz-labs/jsspeccy3 \
+            --pattern jsspeccy-dist.zip \
+            --output _emulator/jsspeccy-dist.zip
+          unzip -q _emulator/jsspeccy-dist.zip -d _emulator/dist
+
       - name: Assemble the site
         run: |
           set -eu
-          tap_files=(build/aw-*-zx128k.tap)
-          test "${#tap_files[@]}" -eq 1
           mkdir -p _site
           cp -R site/. _site/
-          cp "${tap_files[0]}" _site/attribute-wars.tap
+          cp -R _emulator/dist/jsspeccy _site/jsspeccy
+          cp build/aw-*-timex.tap _site/aw-timex.tap
+          cp build/aw-*-zx128k.tap _site/aw-zx128k.tap
+          cp build/aw-*-zx48k.tap _site/aw-zx48k.tap
+
+      - name: Check the pieces the page needs are all there
+        run: |
+          set -eu
+          test -f _site/index.html
+          test -f _site/aw-timex.tap
+          test -f _site/aw-zx128k.tap
+          test -f _site/aw-zx48k.tap
+          test -f _site/jsspeccy/jsspeccy.js
+          test -f _site/jsspeccy/jsspeccy-core.wasm
+          test -f _site/jsspeccy/roms/tc2048.rom
+          test -f _site/jsspeccy/roms/2068-home.rom
+          test -f _site/jsspeccy/tapeloaders/tape_2048.szx
+          test -f _site/jsspeccy/tapeloaders/tape_2068.szx
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

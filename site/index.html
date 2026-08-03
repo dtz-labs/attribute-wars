@@ -22,6 +22,27 @@
     justify-content: center;
   }
   .keys { color: #55ff55; }
+  .switch {
+    display: flex;
+    gap: 0.6rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 1.1rem auto 0;
+  }
+  .switch a {
+    display: inline-block;
+    padding: 0.45rem 1rem;
+    border: 2px solid #55ffff;
+    color: #55ffff;
+    text-decoration: none;
+    letter-spacing: 0.05em;
+  }
+  .switch a[aria-current="true"] {
+    background: #55ffff;
+    color: #101010;
+    font-weight: bold;
+  }
+  .switch a:hover { background: #55ffff; color: #101010; }
   .sound-hint { color: #ffff55; }
   .sponsor {
     display: inline-block;
@@ -42,34 +63,61 @@
 <body>
 <h1>ATTRIBUTE WARS</h1>
 <p>A twin-stick shooter for Timex and ZX Spectrum computers. This page always
-runs the latest ZX Spectrum <strong>128K</strong> TAP built from
-<a href="https://github.com/dtz-labs/attribute-wars">main</a>, so the PT3
-soundtrack and AY effects are audible.
+runs the latest TAP built from
+<a href="https://github.com/dtz-labs/attribute-wars">main</a> on an emulated
+<strong>Timex TC2068</strong> by default &mdash; SCLD double buffering, PT3
+soundtrack and AY effects &mdash; with the TC2048, Spectrum 128K and 48K a
+click away.
 <span class="sound-hint">Press the ▶ button on the display to start — the
 game boots with the PT3 soundtrack (browsers only allow audio after that
 click).</span></p>
 <p class="keys">Move — 5/6/7/8 (cursor) or Kempston pad &nbsp;&nbsp;
-Fire — 0, or aim with Q&nbsp;W&nbsp;E / A&nbsp;D / Z&nbsp;X&nbsp;C</p>
+Fire — 0, or aim with Q&nbsp;W&nbsp;E / A&nbsp;D / Z&nbsp;X&nbsp;C<br>
+…or plug in a real gamepad / joystick — the game reads it as a Kempston
+(press a button on the pad so the browser reveals it)</p>
 <p><a class="sponsor" href="https://buymeacoffee.com/mpasternak">☕ Sponsor
 dtz-labs — support new ZX Spectrum software</a></p>
+<div class="switch">
+  <a id="pick-2068" href="?m=2068">Timex TC2068</a>
+  <a id="pick-2048" href="?m=2048">Timex TC2048</a>
+  <a id="pick-128" href="?m=128">Spectrum 128K</a>
+  <a id="pick-48" href="?m=48">Spectrum 48K</a>
+</div>
 <div id="jsspeccy"></div>
-<p>The Timex TC2048/TC2068/TS2068 build (SCLD double buffering) is not
-playable here (JSSpeccy has no Timex modes) — grab it, and the 48K build,
-from the
+<p>The Timex versions run on our
+<a href="https://github.com/dtz-labs/jsspeccy3">fork of JSSpeccy&nbsp;3</a>,
+which adds the TC2048 and TC2068 video modes; stock JSSpeccy has no Timex
+support, so until now that build could only be downloaded. The 48K build
+flickers by design — no second display page. All TAPs are also in the
 <a href="https://github.com/dtz-labs/attribute-wars/releases">releases</a>.</p>
 <p class="footer">Emulation by
-<a href="https://github.com/gasman/jsspeccy3">JSSpeccy&nbsp;3</a> (GPL-3).</p>
+<a href="https://github.com/gasman/jsspeccy3">JSSpeccy&nbsp;3</a> (GPL-3), in the
+<a href="https://github.com/dtz-labs/jsspeccy3">dtz-labs fork</a> with Timex support.</p>
 <script src="jsspeccy/jsspeccy.js"></script>
 <script>
-JSSpeccy(document.getElementById('jsspeccy'), {
-    machine: '128',
-    openUrl: 'attribute-wars.tap',
-    autoLoadTapes: true,
-    // No autoStart: JSSpeccy creates its AudioContext inside start(), and
-    // never calls resume() - starting via the visible play button keeps that
-    // inside a user gesture, which is the only way browsers allow audio.
-    zoom: 2
-});
+(function () {
+    var BUILDS = {
+        '2068': { machine: 2068, tap: 'aw-timex.tap' },
+        '2048': { machine: 2048, tap: 'aw-timex.tap' },
+        '128':  { machine: 128,  tap: 'aw-zx128k.tap' },
+        '48':   { machine: 48,   tap: 'aw-zx48k.tap' }
+    };
+    var wanted = new URLSearchParams(location.search).get('m');
+    var key = BUILDS[wanted] ? wanted : '2068';
+    var chosen = BUILDS[key];
+
+    document.getElementById('pick-' + key).setAttribute('aria-current', 'true');
+
+    JSSpeccy(document.getElementById('jsspeccy'), {
+        machine: chosen.machine,
+        openUrl: chosen.tap,
+        autoLoadTapes: true,
+        // No autoStart: JSSpeccy creates its AudioContext inside start(), and
+        // never calls resume() - starting via the visible play button keeps that
+        // inside a user gesture, which is the only way browsers allow audio.
+        zoom: 2
+    });
+})();
 </script>
 </body>
 </html>
